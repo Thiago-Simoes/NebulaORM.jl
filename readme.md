@@ -1,53 +1,53 @@
-## Funcionalidades Implementadas
+## Implemented Features
 
-### 1. Conexão com o Banco de Dados
-- **1.1** Uso de variáveis de ambiente com DotEnv para configurar a conexão.
+### 1. Database Connection
+- **1.1** Use of environment variables with DotEnv to configure the connection.
 
-### 2. Criação e Migração de Tabelas
-- **2.1** Função `migrate!` e macro `@Model` que criam os modelos e tabelas automaticamente.
+### 2. Table Creation and Migration
+- **2.1** `migrate!` function and `@Model` macro that automatically create models and tables.
 
-### 3. Registro Global de Modelos
-- Armazenamento dos metadados em um dicionário global.
+### 3. Global Model Registry
+- Storage of metadata in a global dictionary.
 
-### 4. Definição de Colunas e Restrições via Macros
-- Macros para `@PrimaryKey`, `@AutoIncrement`, `@NotNull` e `@Unique`.
+### 4. Column and Constraint Definitions via Macros
+- Macros for `@PrimaryKey`, `@AutoIncrement`, `@NotNull`, and `@Unique`.
 
-### 5. Operações CRUD Básicas
-- Funções para `create`, `update`, `delete`, `findMany`, `findFirst`, `findUnique`, entre outras.
+### 5. Basic CRUD Operations
+- Functions for `create`, `update`, `delete`, `findMany`, `findFirst`, `findUnique`, among others.
 
-### 6. Conversão e Instanciação de Modelos
-- Conversão dos resultados das queries para instâncias dos modelos.
+### 6. Model Conversion and Instantiation
+- Conversion of query results into model instances.
 
-### 7. Geração de UUID
-- Função `generateUuid` para criar identificadores únicos.
+### 7. UUID Generation
+- `generateUuid` function to create unique identifiers.
 
 ---
 
-## Funcionalidades a Implementar
+## Features to Implement
 
-### 1. Segurança e Prevenção de SQL Injection
-- Implementar `prepared statements` ou sanitização dos inputs para evitar injeções.
+### 1. Security and SQL Injection Prevention
+- Implement `prepared statements` or input sanitization to avoid injections.
 
-### 2. Suporte a Transações
-- Adicionar mecanismos de transação (início, `commit` e `rollback`) para operações atômicas.
+### 2. Transaction Support
+- Add transaction mechanisms (`begin`, `commit`, and `rollback`) for atomic operations.
 
-### 3. Pooling de Conexões
-- Implementar um `pool de conexões` para melhorar a performance e evitar sobrecarga no banco.
+### 3. Connection Pooling
+- Implement a `connection pool` to improve performance and prevent database overload.
 
-### 4. Tratamento e Logging de Erros
-- Aprimorar o tratamento de exceções e adicionar `logs` para facilitar a depuração.
+### 4. Error Handling and Logging
+- Improve exception handling and add `logs` to facilitate debugging.
 
-### 5. Expansão do Mapeamento de Tipos SQL para Julia
-- Incluir suporte para mais tipos (ex.: `DATE`, `TIMESTAMP`, etc.).
+### 5. SQL to Julia Type Mapping Expansion
+- Include support for more types (e.g., `DATE`, `TIMESTAMP`, etc.).
 
-### 6. Operações SQL Mais Complexas
-- Suporte para `joins`, `filtros avançados`, `ordenação` e `paginação`.
+### 6. More Complex SQL Operations
+- Support for `joins`, `advanced filters`, `ordering`, and `pagination`.
 
-### 7. Otimização para Grandes Volumes de Dados
-- Revisar o uso de `DataFrames` e avaliar alternativas para performance em grandes datasets.
+### 7. Optimization for Large Datasets
+- Review the use of `DataFrames` and consider alternatives for better performance with large datasets.
 
-### 8. Revisão dos Efeitos Colaterais das Macros
-- Ajustar a execução automática (como a chamada do `migrate!` na macro `@Model`) para evitar surpresas.
+### 8. Macro Side Effects Review
+- Adjust automatic execution (like calling `migrate!` within the `@Model` macro) to avoid surprises.
 
-### 9. Sobrescrita de Funções do Base
-- Repensar a sobrescrita de funções (ex.: `Base.filter`) para evitar conflitos com o ecossistema Julia.
+### 9. Base Function Overriding
+- Rethink overriding functions (e.g., `Base.filter`) to avoid conflicts with the Julia ecosystem.
