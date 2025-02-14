@@ -11,18 +11,20 @@ conn = dbConnection()
 dropTable!(conn, "TestUser")
 
 # Define um modelo de teste com chave primária "user_id"
-@Model TestUser (
-    ("user_id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
+@Model User (
+    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
     ("name", "TEXT", [@NotNull()]),
-    ("email", "TEXT", [@Unique()])
+    ("email", "TEXT", [@Unique(), @NotNull()]),
+    ("cpf", "VARCHAR(11)", [@Unique(), @NotNull()]),
+    ("age", "INTEGER", [])
 )
 
 @testset "SimpleORM Basic CRUD Tests" begin
     # ------------------------------
     # Teste: Criar um registro
     # ------------------------------
-    testData = Dict("name" => "Alice", "email" => "alice@example.com")
-    user = create(TestUser, testData)
+    userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
+    user = create(User, userData)
     @test user.name == "Alice"
     @test user.email == "alice@example.com"
     @test hasproperty(user, :user_id)  # Deve ter a chave primária definida

@@ -5,6 +5,7 @@ using MySQL
 using UUIDs
 using DotEnv
 using DataFrames
+using Dates
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,
        @Model, generateUuid,
@@ -14,12 +15,15 @@ export dbConnection, createTableDefinition, migrate!, dropTable!,
        VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, UUID, @PrimaryKey, @AutoIncrement, @NotNull, @Unique
 
 # Pre-defined SQL type constructors
-const VARCHAR = size -> "VARCHAR($(size))"
-const TEXT    = "TEXT"
-const NUMBER  = "INTEGER"
-const DOUBLE  = "DOUBLE"
-const FLOAT   = "FLOAT"
-const UUID    = "UUID"
+const VARCHAR    = size -> "VARCHAR($(size))"
+const TEXT       = "TEXT"
+const NUMBER     = "INTEGER"
+const DOUBLE     = "DOUBLE"
+const FLOAT      = "FLOAT"
+const UUID       = "VARCHAR(36)"
+const DATE       = "DATE"
+const TIMESTAMP  = "TIMESTAMP"
+const JSON       = "JSON"
 
 # ---------------------------
 # Estruturas Básicas
@@ -49,6 +53,10 @@ function mapSqlTypeToJulia(sqlType::String)
     elseif sqlType in ["FLOAT", "DOUBLE"]
         return :Float64
     elseif sqlType == "TEXT"
+        return :String
+    elseif sqlType == "TIMESTAMP"
+        return :DateTime
+    elseif sqlType == "JSON"
         return :String
     elseif sqlType == "UUID"
         return :String
@@ -207,14 +215,30 @@ end
 
 # Atualiza a função instantiate para usar a conversão acima
 function instantiate(model::DataType, record)
-    rec = record isa Dict ? record : convertRowToDict(record, model)
-    # Obtém os nomes dos campos na ordem definida no metadata
-    orderedFields = [col.name for col in modelConfig(model).columns]
-    # Constrói os argumentos na mesma ordem
-    args = [ rec[field] for field in orderedFields ]
+    meta = modelConfig(model)
+    args = []
+    for (i, col) in enumerate(meta.columns)
+        value = record[i]
+        if value === missing
+            if col.type == "INTEGER"
+                push!(args, 0)
+            elseif col.type in ["FLOAT", "DOUBLE"]
+                push!(args, 0.0)
+            elseif col.type == "VARCHAR(36)" || col.type == "TEXT" || col.type == "JSON"
+                push!(args, "")
+            elseif col.type == "DATE"
+                push!(args, Date("1900-01-01"))
+            elseif col.type == "TIMESTAMP"
+                push!(args, DateTime("1900-01-01T00:00:00"))
+            else
+                push!(args, nothing)
+            end
+        else
+            push!(args, value)
+        end
+    end
     return model(args...)
 end
-
 # ---------------------------
 # Funções CRUD
 # ---------------------------
@@ -259,46 +283,52 @@ end
 
 function create(model::DataType, data::Dict)
     conn = dbConn()
-    # Filtra os campos enviados com base nos campos do modelo
     modelFields = Set(String.(fieldnames(model)))
     filtered = Dict(k => v for (k,v) in data if k in modelFields)
+
+    meta = modelConfig(model)
+
+    # Verificar se há um campo UUID e gerar o UUID se necessário
+    for col in meta.columns
+        if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
+            if !haskey(filtered, col.name)
+                filtered[col.name] = generateUuid()
+            end
+        end
+    end
+
     cols = join(keys(filtered), ", ")
     vals = join([ isa(v, String) ? "'$v'" : string(v) for v in values(filtered) ], ", ")
     query = "INSERT INTO $(modelConfig(model).name) ($cols) VALUES ($vals)"
     DBInterface.execute(conn, query)
-    
-    # Tenta recuperar o registro inserido
+
+    # 1. Se há um campo único definido, busca pelo valor único
+    for col in meta.columns
+        if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
+            uniqueValue = filtered[col.name]
+            println(uniqueValue)
+            println("$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
+            return findFirst(model; filter="$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
+        end
+    end
+
+    # 2. Se não há campo único, mas há uma chave primária autoincrementada
+    id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
+    id = first(DataFrame(id_result))[1]
     pkCol = getPrimaryKeyColumn(model)
     if pkCol !== nothing
-        pkName = pkCol.name
-        if haskey(filtered, pkName)
-            # Se o valor da chave primária foi enviado, usa-o para buscar o registro
-            pkValue = filtered[pkName]
-            filterStr = "$pkName = " * (isa(pkValue, String) ? "'$pkValue'" : string(pkValue))
-            return findFirst(model; filter=filterStr)
-        else
-            # Caso o valor da chave primária não tenha sido informado,
-            # tenta usar uma coluna única (com restrição UNIQUE) que esteja presente
-            meta = modelConfig(model)
-            uniqueCol = nothing
-            for col in meta.columns
-                if occursin("UNIQUE", uppercase(join(col.constraints, " "))) && haskey(filtered, col.name)
-                    uniqueCol = col
-                    break
-                end
-            end
-            if uniqueCol !== nothing
-                uniqueName = uniqueCol.name
-                uniqueValue = filtered[uniqueName]
-                filterStr = "$uniqueName = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue))
-                return findFirst(model; filter=filterStr)
-            else
-                error("Não foi possível recuperar o registro inserido: não foi informado o valor da chave primária e nenhum campo único foi encontrado.")
-            end
-        end
-    else
-        return filtered
+        return findFirst(model; filter="$(pkCol.name) = $id")
     end
+
+    # 3. Caso não consiga com uniqueField nem LAST_INSERT_ID, busca pelo campo UUID
+    for col in meta.columns
+        if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
+            uuid = filtered[col.name]
+            return findFirst(model; filter="$(col.name) = '$uuid'")
+        end
+    end
+
+    error("Não foi possível recuperar o registro inserido.")
 end
 
 function update(model::DataType, filter::String, data::Dict)
