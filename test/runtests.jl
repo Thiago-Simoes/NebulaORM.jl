@@ -25,36 +25,36 @@ dropTable!(conn, "TestUser")
     # ------------------------------
     userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
     user = create(User, userData)
-    @test user.name == "Alice"
-    @test user.email == "alice@example.com"
-    @test hasproperty(user, :user_id)  # Deve ter a chave primária definida
+    @test user.name == "Thiago"
+    @test user.email == "thiago@example.com"
+    @test hasproperty(user, :id)  # Deve ter a chave primária definida
 
     # ------------------------------
     # Teste: Buscar registro com filtro
     # ------------------------------
-    foundUser = findFirst(TestUser; filter="name = 'Alice'")
+    foundUser = findFirst(User; filter="name = 'Thiago'")
     @test foundUser !== nothing
-    @test foundUser.user_id == user.user_id
+    @test foundUser.id == user.id
 
     # ------------------------------
     # Teste: Atualizar registro usando função por tipo
     # ------------------------------
-    updatedUser = update(TestUser, "user_id = $(user.user_id)", Dict("name" => "Alice Updated"))
-    @test updatedUser.name == "Alice Updated"
+    updatedUser = update(User, "id = $(user.id)", Dict("name" => "Thiago Updated"))
+    @test updatedUser.name == "Thiago Updated"
 
     # ------------------------------
     # Teste: Upsert - atualizar se existir, criar se não existir
     # ------------------------------
-    upsertUser = upsert(TestUser, "email", "alice@example.com",
-                        Dict("name" => "Alice Upserted", "email" => "alice@example.com"))
-    @test upsertUser.name == "Alice Upserted"
+    upsertUser = upsert(User, "email", "thiago@example.com",
+                        Dict("name" => "Thiago Upserted", "email" => "thiago@example.com"))
+    @test upsertUser.name == "Thiago Upserted"
 
     # ------------------------------
     # Teste: Atualizar registro via método de instância
     # ------------------------------
-    foundUser.name = "Alice Instance"
+    foundUser.name = "Thiago Instance"
     updatedInstance = update(foundUser)
-    @test updatedInstance.name == "Alice Instance"
+    @test updatedInstance.name == "Thiago Instance"
 
     # ------------------------------
     # Teste: Deletar registro via método de instância
@@ -66,22 +66,22 @@ dropTable!(conn, "TestUser")
     # Teste: Criar múltiplos registros
     # ------------------------------
     records = [
-        Dict("name" => "Bob", "email" => "bob@example.com"),
-        Dict("name" => "Carol", "email" => "carol@example.com")
+        Dict("name" => "Bob", "email" => "bob@example.com", "cpf" => "11111111111"),
+        Dict("name" => "Carol", "email" => "carol@example.com", "cpf" => "22222222222")
     ]
-    createdRecords = createMany(TestUser, records)
+    createdRecords = createMany(User, records)
     @test length(createdRecords) == 2
 
     # ------------------------------
     # Teste: Buscar vários registros
     # ------------------------------
-    manyUsers = findMany(TestUser)
+    manyUsers = findMany(User)
     @test length(manyUsers) ≥ 2
 
     # ------------------------------
     # Teste: Atualizar vários registros
     # ------------------------------
-    updatedMany = updateMany(TestUser, "name LIKE 'Bob%'", Dict("name" => "Bob Updated"))
+    updatedMany = updateMany(User, "name LIKE 'Bob%'", Dict("name" => "Bob Updated"))
     for u in updatedMany
         @test u.name == "Bob Updated"
     end
@@ -89,20 +89,20 @@ dropTable!(conn, "TestUser")
     # ------------------------------
     # Teste: Filtragem usando keyword arguments
     # ------------------------------
-    _ = createMany(TestUser, [
-        Dict("name" => "Dan", "email" => "dan@example.com"),
-        Dict("name" => "Eve", "email" => "eve@example.com")
+    _ = createMany(User, [
+        Dict("name" => "Dan", "email" => "dan@example.com", "cpf" => "33333333333"),
+        Dict("name" => "Eve", "email" => "eve@example.com", "cpf" => "44444444444")
     ])
-    filteredUsers = filter(TestUser; name="Dan")
+    filteredUsers = filter(User; name="Dan")
     @test length(filteredUsers) == 1
     @test filteredUsers[1].name == "Dan"
 
     # ------------------------------
     # Teste: Deletar vários registros
     # ------------------------------
-    deleteManyResult = deleteMany(TestUser, "1=1")
+    deleteManyResult = deleteMany(User, "1=1")
     @test deleteManyResult === true
 end
 
 # Cleanup: Dropar a tabela de teste
-dropTable!(conn, "TestUser")
+dropTable!(conn, "User")

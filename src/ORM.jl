@@ -120,13 +120,16 @@ end
 
 function migrate!(conn, model::Model)
     schema = createTableDefinition(model)
-    query = "CREATE TABLE IF NOT EXISTS $(model.name) ($schema)"
-    DBInterface.execute(conn, query)
+    # Use interpolation for table name and schema; no value binding for identifiers.
+    query = "CREATE TABLE IF NOT EXISTS " * model.name * " (" * schema * ")"
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, [])
 end
 
 function dropTable!(conn, tableName::String)
-    query = "DROP TABLE IF EXISTS $tableName"
-    DBInterface.execute(conn, query)
+    query = "DROP TABLE IF EXISTS " * tableName
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, [])
 end
 
 # ---------------------------
@@ -182,6 +185,7 @@ end
 # ---------------------------
 # Helper: Obtém o último ID inserido via query
 # ---------------------------
+
 function getLastInsertId(conn)
     result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID() as id")
     row = first(result) |> DataFrame
@@ -246,22 +250,22 @@ dbConn() = dbConnection()
 
 function findMany(model::DataType; filter=missing)
     conn = dbConn()
-    query = "SELECT * FROM $(modelConfig(model).name)" *
+    query = "SELECT * FROM " * modelConfig(model).name *
             (filter === missing ? "" : " WHERE " * filter)
-    # Força a cópia de cada row para "fixá-los"
-    df = DBInterface.execute(conn, query) |> DataFrame
+    stmt = DBInterface.prepare(conn, query)
+    df = DBInterface.execute(stmt, []) |> DataFrame
     return [ instantiate(model, row) for row in eachrow(df) ]
 end
 
 function findFirst(model::DataType; filter=missing)
     conn = dbConn()
-    query = "SELECT * FROM $(modelConfig(model).name)" *
+    query = "SELECT * FROM " * modelConfig(model).name *
             (filter === missing ? "" : " WHERE " * filter) * " LIMIT 1"
-    res = collect(DBInterface.execute(conn, query))
+    res = DBInterface.execute(conn, query) |> collect
     return isempty(res) ? nothing : instantiate(model, first(res))
 end
 
-function findFirstOrThrow(model::DataType; filter=missing)
+function findFirstOrThrow(model::DataType; filter=filter)
     rec = findFirst(model; filter=filter)
     rec === nothing && error("No record found")
     return rec
@@ -269,9 +273,10 @@ end
 
 function findUnique(model::DataType, uniqueField, value)
     conn = dbConn()
-    valStr = isa(value, String) ? "'$value'" : string(value)
-    query = "SELECT * FROM $(modelConfig(model).name) WHERE $(uniqueField) = $valStr LIMIT 1"
-    res = DBInterface.execute(conn, query) |> collect
+    tableName = modelConfig(model).name
+    query = "SELECT * FROM " * tableName * " WHERE " * uniqueField * " = ? LIMIT 1"
+    stmt = DBInterface.prepare(conn, query)
+    res = DBInterface.execute(stmt, [value]) |> collect
     return isempty(res) ? nothing : instantiate(model, first(res))
 end
 
@@ -298,33 +303,33 @@ function create(model::DataType, data::Dict)
     end
 
     cols = join(keys(filtered), ", ")
-    vals = join([ isa(v, String) ? "'$v'" : string(v) for v in values(filtered) ], ", ")
-    query = "INSERT INTO $(modelConfig(model).name) ($cols) VALUES ($vals)"
-    DBInterface.execute(conn, query)
+    placeholders = join(fill("?", length(keys(filtered))), ", ")
+    vals = collect(values(filtered))
+    query = "INSERT INTO " * meta.name * " (" * cols * ") VALUES (" * placeholders * ")"
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, vals)
 
-    # 1. Se há um campo único definido, busca pelo valor único
+    # Se há um campo único definido:
     for col in meta.columns
         if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
             uniqueValue = filtered[col.name]
-            println(uniqueValue)
-            println("$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
-            return findFirst(model; filter="$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
+            return findFirst(model; filter = "$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
         end
     end
 
-    # 2. Se não há campo único, mas há uma chave primária autoincrementada
+    # Se não houver, use LAST_INSERT_ID:
     id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
     id = first(DataFrame(id_result))[1]
     pkCol = getPrimaryKeyColumn(model)
     if pkCol !== nothing
-        return findFirst(model; filter="$(pkCol.name) = $id")
+        return findFirst(model; filter = "$(pkCol.name) = $id")
     end
 
-    # 3. Caso não consiga com uniqueField nem LAST_INSERT_ID, busca pelo campo UUID
+    # Buscar pelo campo UUID se necessário:
     for col in meta.columns
         if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
             uuid = filtered[col.name]
-            return findFirst(model; filter="$(col.name) = '$uuid'")
+            return findFirst(model; filter = "$(col.name) = '$uuid'")
         end
     end
 
@@ -335,10 +340,12 @@ function update(model::DataType, filter::String, data::Dict)
     conn = dbConn()
     modelFields = Set(String.(fieldnames(model)))
     filtered = Dict(k => v for (k,v) in data if k in modelFields)
-    assignments = join([ "$k = " * (isa(v, String) ? "'$v'" : string(v)) for (k,v) in filtered ], ", ")
-    query = "UPDATE $(modelConfig(model).name) SET $assignments WHERE $filter"
-    DBInterface.execute(conn, query)
-    return findFirst(model; filter=filter)
+    assignments = join([ "$k = ?" for (k,_) in filtered ], ", ")
+    vals = collect(values(filtered))
+    query = "UPDATE " * modelConfig(model).name * " SET " * assignments * " WHERE " * filter
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, vals)
+    return findFirst(model; filter = filter)
 end
 
 function upsert(model::DataType, uniqueField, value, data::Dict)
@@ -353,8 +360,9 @@ end
 
 function delete(model::DataType, filter::String)
     conn = dbConn()
-    query = "DELETE FROM $(modelConfig(model).name) WHERE $filter"
-    DBInterface.execute(conn, query)
+    query = "DELETE FROM " * modelConfig(model).name * " WHERE " * filter
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, [])
     return true
 end
 
@@ -369,21 +377,24 @@ end
 
 function updateMany(model::DataType, filter::String, data::Dict)
     conn = dbConn()
-    assignments = join([ "$k = " * (isa(v, String) ? "'$v'" : string(v)) for (k,v) in data ], ", ")
-    query = "UPDATE $(modelConfig(model).name) SET $assignments WHERE $filter"
-    DBInterface.execute(conn, query)
-    return findMany(model; filter=filter)
+    assignments = join([ "$k = ?" for (k,_) in data ], ", ")
+    vals = collect(values(data))
+    query = "UPDATE " * modelConfig(model).name * " SET " * assignments * " WHERE " * filter
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, vals)
+    return findMany(model; filter = filter)
 end
 
 function updateManyAndReturn(model::DataType, filter::String, data::Dict)
     updateMany(model, filter, data)
-    return findMany(model; filter=filter)
+    return findMany(model; filter = filter)
 end
 
 function deleteMany(model::DataType, filter::String)
     conn = dbConn()
-    query = "DELETE FROM $(modelConfig(model).name) WHERE $filter"
-    DBInterface.execute(conn, query)
+    query = "DELETE FROM " * modelConfig(model).name * " WHERE " * filter
+    stmt = DBInterface.prepare(conn, query)
+    DBInterface.execute(stmt, [])
     return true
 end
 
