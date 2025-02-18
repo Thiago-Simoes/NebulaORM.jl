@@ -8,7 +8,7 @@ using ORM
 
 # Setup: Obter conexão e dropar a tabela de teste se existir
 conn = dbConnection()
-dropTable!(conn, "TestUser")
+dropTable!(conn, "User")
 
 # Define um modelo de teste com chave primária "user_id"
 @Model User (

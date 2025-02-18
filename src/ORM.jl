@@ -135,6 +135,30 @@ end
 # ---------------------------
 # Macro @Model: Define o struct do modelo e registra os metadados
 # ---------------------------
+"""
+        macro Model(modelName, colsExpr)
+
+    # Arguments
+    - `modelName`: name of the model
+    - `colsExpr`: tuple of tuples with column definitions
+
+    # Return with explanation
+    Generates a struct definition and a registration block for the model.
+    
+    # Example
+    julia> @Model User (
+        ("id", NUMBER, PrimaryKey(), AutoIncrement()),
+        ("name", VARCHAR(255), NotNull()),
+        ("email", VARCHAR(255), NotNull(), Unique())
+    )
+
+    # Output
+    Base.@kwdef mutable struct User
+        id::Int
+        name::String
+        email::String
+    end
+"""
 macro Model(modelName, colsExpr)
     # Processa as colunas (espera-se uma tupla de tuplas: (nome, tipo, restrições))
     columnsList = colsExpr.args
