@@ -11,7 +11,7 @@ export dbConnection, createTableDefinition, migrate!, dropTable!,
        @Model, generateUuid,
        findMany, findFirst, findFirstOrThrow, findUnique, findUniqueOrThrow,
        create, update, upsert, delete, createMany, createManyAndReturn,
-       updateMany, updateManyAndReturn, deleteMany,
+       updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
        VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, UUID, @PrimaryKey, @AutoIncrement, @NotNull, @Unique
 
 # Pre-defined SQL type constructors
@@ -316,17 +316,338 @@ function instantiate(model::DataType, record)
     end
     return model(args...)
 end
+
+# ---------------------------
+# Relationship Helper Functions
+# ---------------------------
+# Retrieves all related records in a "hasMany" relationship
+function hasMany(parentInstance, relationName)
+    parentType = typeof(parentInstance)
+    relationships = getRelationships(parentType)
+    for rel in relationships
+        if rel.field == relationName && rel.type == :hasMany
+            pkCol = getPrimaryKeyColumn(parentType)
+            if pkCol === nothing
+                error("No primary key defined for model $(parentType)")
+            end
+            parentValue = getfield(parentInstance, Symbol(pkCol.name))
+            filterStr = "$(rel.targetField) = " * (isa(parentValue, String) ? "'$parentValue'" : string(parentValue))
+            return findMany(resolveModel(rel.targetModel); filter=filterStr)
+        end
+    end
+    error("No hasMany relationship found with name $relationName for model $(parentType)")
+end
+
+function hasMany(parentInstance, relatedModel::DataType, foreignKey::String)
+    local parentType = typeof(parentInstance)
+    local pkCol = getPrimaryKeyColumn(parentType)
+    if pkCol === nothing
+        error("No primary key defined for model $(parentType)")
+    end
+    local parentValue = getfield(parentInstance, Symbol(pkCol.name))
+    # Cria o query dict usando o foreignKey para filtrar os registros do modelo relacionado
+    return findMany(relatedModel; query=Dict("where" => Dict(foreignKey => parentValue)))
+end
+
+
+# Retrieves the parent record in a "belongsTo" relationship
+function belongsTo(childInstance, relationName)
+    childType = typeof(childInstance)
+    relationships = getRelationships(childType)
+    for rel in relationships
+        if rel.field == relationName && rel.type == :belongsTo
+            childFKValue = getfield(childInstance, Symbol(rel.field))
+            return findUnique(resolveModel(rel.targetModel), rel.targetField, childFKValue)
+        end
+    end
+    error("No belongsTo relationship found with name $relationName for model $(childType)")
+end
+
+function belongsTo(childInstance, relatedModel::DataType, foreignKey::String)
+    # Obtém o valor da chave estrangeira no registro filho
+    local childValue = getfield(childInstance, Symbol(foreignKey))
+    # Busca a chave primária do modelo relacionado
+    local pk = getPrimaryKeyColumn(relatedModel)
+    if pk === nothing
+        error("No primary key defined for model $(relatedModel)")
+    end
+    # Usa o valor da chave estrangeira para buscar o registro pai
+    return findUnique(relatedModel, pk.name, childValue)
+end
+
+
+# Retrieves the single related record in a "hasOne" relationship
+function hasOne(parentInstance, relationName)
+    parentType = typeof(parentInstance)
+    relationships = getRelationships(parentType)
+    for rel in relationships
+        if rel.field == relationName && rel.type == :hasOne
+            pkCol = getPrimaryKeyColumn(parentType)
+            if pkCol === nothing
+                error("No primary key defined for model $(parentType)")
+            end
+            parentValue = getfield(parentInstance, Symbol(pkCol.name))
+            filterStr = "$(rel.targetField) = " * (isa(parentValue, String) ? "'$parentValue'" : string(parentValue))
+            return findFirst(resolveModel(rel.targetModel); filter=filterStr)
+        end
+    end
+    error("No hasOne relationship found with name $relationName for model $(parentType)")
+end
+
+function hasOne(parentInstance, relatedModel::DataType, foreignKey::String)
+    # Obtém a chave primária do registro pai
+    local parentType = typeof(parentInstance)
+    local pkCol = getPrimaryKeyColumn(parentType)
+    if pkCol === nothing
+        error("No primary key defined for model $(parentType)")
+    end
+    local parentValue = getfield(parentInstance, Symbol(pkCol.name))
+    # Busca o registro relacionado que tem o foreignKey igual ao valor da chave primária do pai
+    return findFirst(relatedModel; query=Dict("where" => Dict(foreignKey => parentValue)))
+end
+
+
+# ---------------------------
+# Query Builder Inspired by Prisma.io
+# ---------------------------
+# Helper function to build the WHERE clause from a Dict
+function buildWhereClause(whereDict::Dict)
+    conditions = String[]
+    for (key, val) in whereDict
+        if key == "endswith"
+            # For each column, create condition with LIKE '%value'
+            for (col, subStr) in val
+                push!(conditions, "$col LIKE '%" * string(subStr) * "'")
+            end
+        elseif key == "startswith"
+            for (col, subStr) in val
+                push!(conditions, "$col LIKE '" * string(subStr) * "%'")
+            end
+        elseif key == "contains"
+            for (col, subStr) in val
+                push!(conditions, "$col LIKE '%" * string(subStr) * "%'")
+            end
+        elseif key == "not"
+            innerCondition = buildWhereClause(val)
+            push!(conditions, "NOT (" * innerCondition * ")")
+        elseif key == "in"
+            # 'in' expects a Dict mapping a column to an array of values
+            for (col, arr) in val
+                valuesStr = join([isa(x, String) ? "'$x'" : string(x) for x in arr], ", ")
+                push!(conditions, "$col IN (" * valuesStr * ")")
+            end
+        else
+            # Direct equality
+            if isa(val, String)
+                push!(conditions, "$key = '$val'")
+            else
+                push!(conditions, "$key = " * string(val))
+            end
+        end
+    end
+    return join(conditions, " AND ")
+end
+
+# Helper function to build JOIN clause based on a relationship
+function buildJoinClause(rootModel::DataType, rel::Relationship)
+    rootTable = modelConfig(rootModel).name
+    includedModel = resolveModel(rel.targetModel)
+    includedTable = modelConfig(includedModel).name
+    if rel.type in (:hasMany, :hasOne)
+        pkCol = getPrimaryKeyColumn(rootModel)
+        if pkCol === nothing
+            error("No primary key for model $(rootModel)")
+        end
+        joinCondition = "$rootTable." * pkCol.name * " = $includedTable." * rel.targetField
+    elseif rel.type == :belongsTo
+        parentPk = getPrimaryKeyColumn(includedModel)
+        joinCondition = "$includedTable." * parentPk.name * " = $rootTable." * rel.field
+    else
+        error("Unknown relationship type $(rel.type)")
+    end
+    return ("INNER", includedModel, joinCondition)
+end
+
+# Main function for dynamic queries using a Prisma-like syntax.
+# Supports keys: "where", "include", "orderBy", "limit", "offset"
+function prismaQuery(model::DataType, queryDict::Dict)
+    # Extract query parameters
+    whereClause = ""
+    orderByClause = ""
+    limitClause = ""
+    offsetClause = ""
+    joinSpecs = []
+
+    if haskey(queryDict, "where")
+        whereClause = buildWhereClause(queryDict["where"])
+    end
+
+    if haskey(queryDict, "orderBy")
+        orderByClause = queryDict["orderBy"]
+    end
+
+    if haskey(queryDict, "limit")
+        limitClause = "LIMIT " * string(queryDict["limit"])
+    end
+
+    if haskey(queryDict, "offset")
+        offsetClause = "OFFSET " * string(queryDict["offset"])
+    end
+
+    if haskey(queryDict, "include")
+        includeArray = queryDict["include"]
+        for includedModel in includeArray
+            relationships = getRelationships(model)
+            found = false
+            for rel in relationships
+                if resolveModel(rel.targetModel) == includedModel
+                    push!(joinSpecs, buildJoinClause(model, rel))
+                    found = true
+                    break
+                end
+            end
+            # Optionally: warn if relationship not found for the include
+        end
+    end
+
+    rootTable = modelConfig(model).name
+    query = "SELECT * FROM $rootTable"
+    for joinSpec in joinSpecs
+        joinType, joinModel, onCondition = joinSpec
+        joinTable = modelConfig(joinModel).name
+        query *= " $(joinType) JOIN $joinTable ON $onCondition"
+    end
+
+    if whereClause != ""
+        query *= " WHERE $whereClause"
+    end
+    if orderByClause != ""
+        query *= " ORDER BY $orderByClause"
+    end
+    if limitClause != ""
+        query *= " " * limitClause
+    end
+    if offsetClause != ""
+        query *= " " * offsetClause
+    end
+
+    conn = dbConn()
+    stmt = DBInterface.prepare(conn, query)
+    df = DBInterface.execute(stmt, []) |> DataFrame
+    results = [ instantiate(model, row) for row in eachrow(df) ]
+
+    # If "include" is specified, enrich results with related records.
+    if haskey(queryDict, "include")
+        enrichedResults = []
+        for rec in results
+            enriched = Dict("record" => rec)
+            for includedModel in queryDict["include"]
+                relationships = getRelationships(model)
+                for rel in relationships
+                    if resolveModel(rel.targetModel) == includedModel
+                        if rel.type == :hasMany
+                            enriched[string(includedModel)] = hasMany(rec, rel.field)
+                        elseif rel.type == :hasOne
+                            enriched[string(includedModel)] = hasOne(rec, rel.field)
+                        elseif rel.type == :belongsTo
+                            enriched[string(includedModel)] = belongsTo(rec, rel.field)
+                        end
+                        break
+                    end
+                end
+            end
+            push!(enrichedResults, enriched)
+        end
+        return enrichedResults
+    end
+
+    return results
+end
+
+
 # ---------------------------
 # Funções CRUD
 # ---------------------------
 dbConn() = dbConnection()
 
-function findMany(model::DataType; filter=missing)
+function buildSqlQuery(model::DataType, queryDict::Dict)
+    # Build SELECT clause
+    local selectClause = "*"
+    if haskey(queryDict, "select")
+        local selectFields = queryDict["select"]
+        if isa(selectFields, Vector)
+            selectClause = join(selectFields, ", ")
+        else
+            error("select must be a vector of fields")
+        end
+    end
+
+    local baseTable = modelConfig(model).name
+    local query = "SELECT " * selectClause * " FROM " * baseTable
+
+    # Handle JOIN if "include" is specified
+    local joinSpecs = []
+    if haskey(queryDict, "include")
+        local includeArray = queryDict["include"]
+        for includedModel in includeArray
+            local relationships = getRelationships(model)
+            local found = false
+            for rel in relationships
+                if resolveModel(rel.targetModel) == includedModel
+                    push!(joinSpecs, buildJoinClause(model, rel))
+                    found = true
+                    break
+                end
+            end
+            # Opcional: avisar se não encontrar a relação
+        end
+        for joinSpec in joinSpecs
+            joinType, joinModel, onCondition = joinSpec
+            local joinTable = modelConfig(joinModel).name
+            query *= " $(joinType) JOIN $joinTable ON $onCondition"
+        end
+    end
+
+    # Build WHERE clause
+    if haskey(queryDict, "where")
+        local whereClause = buildWhereClause(queryDict["where"])
+        if whereClause != ""
+            query *= " WHERE " * whereClause
+        end
+    end
+
+    # Order By
+    if haskey(queryDict, "orderBy")
+        query *= " ORDER BY " * string(queryDict["orderBy"])
+    end
+
+    # Limit e Offset
+    if haskey(queryDict, "limit")
+        query *= " LIMIT " * string(queryDict["limit"])
+        if haskey(queryDict, "offset")
+            query *= " OFFSET " * string(queryDict["offset"])
+        end
+    end
+
+    return query
+end
+
+
+function normalizeQueryDict(query::AbstractDict)
+    normalized = Dict{String,Any}()
+    for (k, v) in query
+        normalized[string(k)] = v
+    end
+    return normalized
+end
+
+
+function findMany(model::DataType; query::Dict = Dict())
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
-    query = "SELECT * FROM " * modelConfig(resolved).name *
-            (filter === missing ? "" : " WHERE " * filter)
+    local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConn()
-    local stmt = DBInterface.prepare(conn, query)
+    local stmt = DBInterface.prepare(conn, sqlQuery)
     local df = DBInterface.execute(stmt, []) |> DataFrame
     return [ instantiate(resolved, row) for row in eachrow(df) ]
 end
@@ -347,54 +668,55 @@ Realiza uma consulta avançada no modelo base, permitindo definir joins, filtros
 - `orderBy`: string definindo a ordenação (ex.: `"User.createdAt DESC"`).
 - `limit` e `offset`: para paginação.
 """
-function advancedFindMany(model::DataType; 
-                          joins=[], 
-                          filters="", 
-                          orderBy="", 
-                          limit::Union{Int,Nothing}=nothing, 
-                          offset::Union{Int,Nothing}=nothing)
+function advancedFindMany(model::DataType; query::AbstractDict = Dict())
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
-    local baseTable = modelConfig(resolved).name
-    local query = "SELECT * FROM $baseTable"
-
-    # Adicionar cláusulas JOIN
-    for joinSpec in joins
-        joinType, joinModel, onCondition = joinSpec
-        local joinTable = modelConfig(resolveModel(joinModel)).name
-        query *= " $(uppercase(String(joinType))) JOIN $joinTable ON $onCondition"
-    end
-
-    # Filtros
-    if !isempty(filters)
-        query *= " WHERE $filters"
-    end
-
-    # Ordenação
-    if !isempty(orderBy)
-        query *= " ORDER BY $orderBy"
-    end
-
-    # Limite e Offset
-    if limit !== nothing
-        query *= " LIMIT $limit"
-        if offset !== nothing
-            query *= " OFFSET $offset"
-        end
-    end
-
+    local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConn()
-    local stmt = DBInterface.prepare(conn, query)
+    local stmt = DBInterface.prepare(conn, sqlQuery)
     local df = DBInterface.execute(stmt, []) |> DataFrame
-    return [ instantiate(resolved, row) for row in eachrow(df) ]
+    local results = [ instantiate(resolved, row) for row in eachrow(df) ]
+
+    # Se a query incluir "include", enriquece os resultados com os registros relacionados
+    if haskey(query, "include")
+        local enrichedResults = []
+        for rec in results
+            local enriched = Dict("record" => rec)
+            for includedModel in query["include"]
+                local relationships = getRelationships(model)
+                for rel in relationships
+                    if resolveModel(rel.targetModel) == includedModel
+                        if rel.type == :hasMany
+                            enriched[string(includedModel)] = hasMany(rec, rel.field)
+                        elseif rel.type == :hasOne
+                            enriched[string(includedModel)] = hasOne(rec, rel.field)
+                        elseif rel.type == :belongsTo
+                            enriched[string(includedModel)] = belongsTo(rec, rel.field)
+                        end
+                        break
+                    end
+                end
+            end
+            push!(enrichedResults, enriched)
+        end
+        return enrichedResults
+    end
+
+    return results
 end
 
 
-function findFirst(model::DataType; filter=missing)
+function findFirst(model::DataType; query::Dict = Dict())
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
+    # Garante que haja LIMIT 1 na query
+    if !haskey(query, "limit")
+        query["limit"] = 1
+    end
+    local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConn()
-    local query = "SELECT * FROM " * modelConfig(resolved).name *
-                  (filter === missing ? "" : " WHERE " * filter) * " LIMIT 1"
-    local res = DBInterface.execute(conn, query) |> collect
+    local stmt = DBInterface.prepare(conn, sqlQuery)
+    local res = DBInterface.execute(stmt, []) |> DataFrame
     return isempty(res) ? nothing : instantiate(resolved, first(res))
 end
 
@@ -404,13 +726,26 @@ function findFirstOrThrow(model::DataType; filter=filter)
     return rec
 end
 
-function findUnique(model::DataType, uniqueField, value)
+function findUnique(model::DataType, uniqueField, value; query::AbstractDict = Dict())
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
+    # Adiciona a condição única ao filtro
+    if haskey(query, "where")
+        if query["where"] isa Dict
+            query["where"][uniqueField] = value
+        else
+            error("The 'where' field must be a Dict")
+        end
+    else
+        query["where"] = Dict(uniqueField => value)
+    end
+    if !haskey(query, "limit")
+        query["limit"] = 1
+    end
+    local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConn()
-    local tableName = modelConfig(resolved).name
-    local query = "SELECT * FROM " * tableName * " WHERE " * uniqueField * " = ? LIMIT 1"
-    local stmt = DBInterface.prepare(conn, query)
-    local res = DBInterface.execute(stmt, [value]) |> collect
+    local stmt = DBInterface.prepare(conn, sqlQuery)
+    local res = DBInterface.execute(stmt, []) |> DataFrame
     return isempty(res) ? nothing : instantiate(resolved, first(res))
 end
 
@@ -447,41 +782,56 @@ function create(model::DataType, data::Dict)
     # Se há um campo único definido:
     for col in meta.columns
         if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
-            uniqueValue = filtered[col.name]
-            return findFirst(resolved; filter = "$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
+            local uniqueValue = filtered[col.name]
+            return findFirst(resolved; query = Dict("where" => Dict(col.name => uniqueValue)))
         end
     end
 
     # Se não houver, use LAST_INSERT_ID:
-    id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
-    id = first(DataFrame(id_result))[1]
-    pkCol = getPrimaryKeyColumn(resolved)
+    local id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
+    local id = first(DataFrame(id_result))[1]
+    local pkCol = getPrimaryKeyColumn(resolved)
     if pkCol !== nothing
-        return findFirst(resolved; filter = "$(pkCol.name) = $id")
+        return findFirst(resolved; query = Dict("where" => Dict(pkCol.name => id)))
     end
 
     # Buscar pelo campo UUID se necessário:
     for col in meta.columns
         if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
-            uuid = filtered[col.name]
-            return findFirst(resolved; filter = "$(col.name) = '$uuid'")
+            local uuid = filtered[col.name]
+            return findFirst(resolved; query = Dict("where" => Dict(col.name => uuid)))
         end
     end
 
     error("Não foi possível recuperar o registro inserido.")
 end
 
-function update(model::DataType, filter::String, data::Dict)
+function update(model::DataType, query::AbstractDict, data::Dict)
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local conn = dbConn()
     local modelFields = Set(String.(fieldnames(resolved)))
-    local filtered = Dict(k => v for (k,v) in data if k in modelFields)
-    local assignments = join([ "$k = ?" for (k,_) in filtered ], ", ")
-    local vals = collect(values(filtered))
-    local query = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * filter
-    local stmt = DBInterface.prepare(conn, query)
+    local filteredData = Dict(k => v for (k,v) in data if k in modelFields)
+    local assignments = join([ "$k = ?" for (k,_) in filteredData ], ", ")
+    local vals = collect(values(filteredData))
+    
+    if !haskey(query, "where")
+        error("Query dict must have a 'where' clause for update")
+    end
+    local whereClause = ""
+    local wherePart = query["where"]
+    if isa(wherePart, String)
+        whereClause = wherePart
+    elseif isa(wherePart, Dict)
+        whereClause = buildWhereClause(wherePart)
+    else
+        error("Invalid type for 'where' clause")
+    end
+
+    local updateQuery = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * whereClause
+    local stmt = DBInterface.prepare(conn, updateQuery)
     DBInterface.execute(stmt, vals)
-    return findFirst(resolved; filter = filter)
+    return findFirst(resolved; query=query)
 end
 
 function upsert(model::DataType, uniqueField, value, data::Dict)
@@ -490,16 +840,30 @@ function upsert(model::DataType, uniqueField, value, data::Dict)
     if found === nothing
         return create(resolved, data)
     else
-        local f = "$uniqueField = " * (isa(value, String) ? "'$value'" : string(value))
-        return update(resolved, f, data)
+        local queryDict = Dict("where" => Dict(uniqueField => value))
+        return update(resolved, queryDict, data)
     end
 end
 
-function delete(model::DataType, filter::String)
+function delete(model::DataType, query::Dict)
+    query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local conn = dbConn()
-    local query = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * filter
-    local stmt = DBInterface.prepare(conn, query)
+    if !haskey(query, "where")
+        error("Query dict must have a 'where' clause for delete")
+    end
+    local whereClause = ""
+    local wherePart = query["where"]
+    if isa(wherePart, String)
+        whereClause = wherePart
+    elseif isa(wherePart, Dict)
+        whereClause = buildWhereClause(wherePart)
+    else
+        error("Invalid type for 'where' clause")
+    end
+
+    local deleteQuery = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * whereClause
+    local stmt = DBInterface.prepare(conn, deleteQuery)
     DBInterface.execute(stmt, [])
     return true
 end
@@ -515,28 +879,62 @@ function createManyAndReturn(model::DataType, dataList::Vector{Dict})
     return findMany(resolved)
 end
 
-function updateMany(model::DataType, filter::String, data::Dict)
+function updateMany(model::DataType, query, data::Dict)
+    local q = normalizeQueryDict(query)
+    if !haskey(q, "where")
+        error("Query dict must have a 'where' clause for updateMany")
+    end
+    local wherePart = q["where"]
+    local whereClause = ""
+    if isa(wherePart, String)
+        whereClause = wherePart
+    elseif isa(wherePart, Dict)
+        whereClause = buildWhereClause(wherePart)
+    else
+        error("Invalid type for 'where' clause")
+    end
+
     local resolved = resolveModel(model)
     local conn = dbConn()
-    local assignments = join([ "$k = ?" for (k,_) in data ], ", ")
+    local assignments = join([ "$k = ?" for (k, _) in data ], ", ")
     local vals = collect(values(data))
-    local query = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * filter
-    local stmt = DBInterface.prepare(conn, query)
+    local updateQuery = "UPDATE " * modelConfig(resolved).name *
+                        " SET " * assignments *
+                        " WHERE " * whereClause
+    local stmt = DBInterface.prepare(conn, updateQuery)
     DBInterface.execute(stmt, vals)
-    return findMany(resolved; filter = filter)
+    return findMany(resolved; query=q)
 end
 
-function updateManyAndReturn(model::DataType, filter::String, data::Dict)
-    updateMany(model, filter, data)
+# Atualiza vários registros e retorna os registros atualizados
+function updateManyAndReturn(model::DataType, query, data::Dict)
+    local q = normalizeQueryDict(query)
+    updateMany(model, q, data)
     local resolved = resolveModel(model)
-    return findMany(resolved; filter = filter)
+    return findMany(resolved; query=q)
 end
 
-function deleteMany(model::DataType, filter::String)
+# Deleta vários registros com base no query dict (que deve conter a cláusula "where")
+function deleteMany(model::DataType, query=Dict())
+    local q = normalizeQueryDict(query)
+    if !haskey(q, "where")
+        error("Query dict must have a 'where' clause for deleteMany")
+    end
+    local wherePart = q["where"]
+    local whereClause = ""
+    if isa(wherePart, String)
+        whereClause = wherePart
+    elseif isa(wherePart, Dict)
+        whereClause = buildWhereClause(wherePart)
+    else
+        error("Invalid type for 'where' clause")
+    end
+
     local resolved = resolveModel(model)
     local conn = dbConn()
-    local query = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * filter
-    local stmt = DBInterface.prepare(conn, query)
+    local deleteQuery = "DELETE FROM " * modelConfig(resolved).name *
+                        " WHERE " * whereClause
+    local stmt = DBInterface.prepare(conn, deleteQuery)
     DBInterface.execute(stmt, [])
     return true
 end
@@ -547,12 +945,12 @@ function update(modelInstance)
     pkCol === nothing && error("No primary key defined for model $(modelType)")
     pkName = pkCol.name
     id = getfield(modelInstance, Symbol(pkName))
-    filterStr = "$pkName = " * (isa(id, String) ? "'$id'" : string(id))
+    query = Dict("where" => Dict(pkName => (isa(id, String) ? "'$id'" : string(id))))
     data = Dict{String,Any}()
     for field in fieldnames(modelType)
         data[string(field)] = getfield(modelInstance, field)
     end
-    return update(modelType, filterStr, data)
+    return update(modelType, query, data)
 end
 
 function delete(modelInstance)
@@ -561,8 +959,9 @@ function delete(modelInstance)
     pkCol === nothing && error("No primary key defined for model $(modelType)")
     pkName = pkCol.name
     id = getfield(modelInstance, Symbol(pkName))
-    filterStr = "$pkName = " * (isa(id, String) ? "'$id'" : string(id))
-    return delete(modelType, filterStr)
+    query = Dict("where" => Dict(pkName => (isa(id, String) ? "'$id'" : string(id))))
+
+    return delete(modelType, query)
 end
 
 function Base.filter(model::DataType; kwargs...)

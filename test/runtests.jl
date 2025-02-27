@@ -1,17 +1,17 @@
-# Implementa os testes unitários para o módulo `ORM.jl' e suas dependências.
+# Implementa os testes unitários para o módulo `ORM.jl` e suas dependências.
 import Pkg
 Pkg.activate("..")
-# ... include other test files as needed ...
+# ... incluir outros arquivos de teste conforme necessário ...
 
 using Test
 using ORM
 
-# Setup: Obter conexão e dropar a tabela de teste se existir
+# Setup: Obter conexão e dropar as tabelas de teste, se existirem
 conn = dbConnection()
 dropTable!(conn, "User")
 dropTable!(conn, "Post")
 
-# Define um modelo de teste com chave primária "user_id"
+# Define um modelo de teste com chave primária "id"
 @Model User (
     ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
     ("name", "TEXT", [@NotNull()]),
@@ -36,19 +36,19 @@ dropTable!(conn, "Post")
     user = create(User, userData)
     @test user.name == "Thiago"
     @test user.email == "thiago@example.com"
-    @test hasproperty(user, :id)  # Deve ter a chave primária definida
+    @test hasproperty(user, :id)  # A chave primária deve estar definida
 
     # ------------------------------
-    # Teste: Buscar registro com filtro
+    # Teste: Buscar registro com filtro (usando query dict)
     # ------------------------------
-    foundUser = findFirst(User; filter="name = 'Thiago'")
+    foundUser = findFirst(User; query=Dict("where" => Dict("name" => "Thiago")))
     @test foundUser !== nothing
     @test foundUser.id == user.id
 
     # ------------------------------
-    # Teste: Atualizar registro usando função por tipo
+    # Teste: Atualizar registro usando função update com query dict
     # ------------------------------
-    updatedUser = update(User, "id = $(user.id)", Dict("name" => "Thiago Updated"))
+    updatedUser = update(User, Dict("where" => Dict("id" => user.id)), Dict("name" => "Thiago Updated"))
     @test updatedUser.name == "Thiago Updated"
 
     # ------------------------------
@@ -82,48 +82,48 @@ dropTable!(conn, "Post")
     @test length(createdRecords) == 2
 
     # ------------------------------
-    # Teste: Buscar vários registros
+    # Teste: Buscar vários registros (query dict vazio)
     # ------------------------------
     manyUsers = findMany(User)
     @test length(manyUsers) ≥ 2
 
     # ------------------------------
-    # Teste: Atualizar vários registros
+    # Teste: Atualizar vários registros usando query dict
     # ------------------------------
-    updatedMany = updateMany(User, "name LIKE 'Bob%'", Dict("name" => "Bob Updated"))
+    updatedMany = updateMany(User, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
     for u in updatedMany
         @test u.name == "Bob Updated"
     end
 
     # ------------------------------
-    # Teste: Filtragem usando keyword arguments
+    # Teste: Atualizar vários registros e retornar os registros atualizados
     # ------------------------------
-    _ = createMany(User, [
-        Dict("name" => "Dan", "email" => "dan@example.com", "cpf" => "33333333333"),
-        Dict("name" => "Eve", "email" => "eve@example.com", "cpf" => "44444444444")
-    ])
-    filteredUsers = filter(User; name="Dan")
-    @test length(filteredUsers) == 1
-    @test filteredUsers[1].name == "Dan"
+    updatedManyAndReturn = updateManyAndReturn(User, Dict("where" => Dict("name" => "Carol")), Dict("name" => "Carol Updated"))
+    for u in updatedManyAndReturn
+        @test u.name == "Carol Updated"
+    end
 
     # ------------------------------
-    # Teste: Buscar registros relacionados
+    # Teste: Criar registro relacionado (Post)
     # ------------------------------
     postData = Dict("title" => "My First Post", "authorId" => user.id)
     post = create(Post, postData)
     @test post.title == "My First Post"
     @test post.authorId == user.id
 
+    # ------------------------------
+    # Teste: Buscar registros relacionados
+    # ------------------------------
     @test hasMany(user, Post, "authorId")[1].title == "My First Post"
     @test belongsTo(post, User, "authorId").name == "Thiago"
 
     # ------------------------------
-    # Teste: Deletar vários registros
+    # Teste: Deletar vários registros usando query dict
     # ------------------------------
-    deleteManyResult = deleteMany(User, "1=1")
+    deleteManyResult = deleteMany(User, Dict("where" => "1=1"))
     @test deleteManyResult === true
 end
 
-# Cleanup: Dropar a tabela de teste
+# Cleanup: Opcionalmente dropar as tabelas de teste
 # dropTable!(conn, "User")
 # dropTable!(conn, "Post")
