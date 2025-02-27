@@ -1,6 +1,12 @@
 # Changelog
 ## [Unreleased]
 
+### Added
+- **More Complex SQL Operations**
+  - Support for joins, advanced filters, ordering, and pagination.
+- **Relationship between Models**
+  - Support for relationships between models, like foreign key.
+
 ### Upcoming
 - **Security and SQL Injection Prevention**
   - Further input sanitization to complement prepared statements.

@@ -9,15 +9,24 @@ using ORM
 # Setup: Obter conexão e dropar a tabela de teste se existir
 conn = dbConnection()
 dropTable!(conn, "User")
+dropTable!(conn, "Post")
 
 # Define um modelo de teste com chave primária "user_id"
 @Model User (
     ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
     ("name", "TEXT", [@NotNull()]),
-    ("email", "TEXT", [@Unique(), @NotNull()]),
-    ("cpf", "VARCHAR(11)", [@Unique(), @NotNull()]),
-    ("age", "INTEGER", [])
-)
+    ("email", "TEXT", [@Unique(), @NotNull()])
+) [
+    ("posts", Post, "authorId", :hasMany)
+]
+
+@Model Post (
+    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
+    ("title", "TEXT", [@NotNull()]),
+    ("authorId", "INTEGER", [@NotNull()])
+) [
+    ("author", User, "authorId", :belongsTo)
+]
 
 @testset "SimpleORM Basic CRUD Tests" begin
     # ------------------------------
@@ -98,6 +107,17 @@ dropTable!(conn, "User")
     @test filteredUsers[1].name == "Dan"
 
     # ------------------------------
+    # Teste: Buscar registros relacionados
+    # ------------------------------
+    postData = Dict("title" => "My First Post", "authorId" => user.id)
+    post = create(Post, postData)
+    @test post.title == "My First Post"
+    @test post.authorId == user.id
+
+    @test hasMany(user, Post, "authorId")[1].title == "My First Post"
+    @test belongsTo(post, User, "authorId").name == "Thiago"
+
+    # ------------------------------
     # Teste: Deletar vários registros
     # ------------------------------
     deleteManyResult = deleteMany(User, "1=1")
@@ -105,4 +125,5 @@ dropTable!(conn, "User")
 end
 
 # Cleanup: Dropar a tabela de teste
-dropTable!(conn, "User")
+# dropTable!(conn, "User")
+# dropTable!(conn, "Post")

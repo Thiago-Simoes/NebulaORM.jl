@@ -40,8 +40,20 @@ Base.@kwdef mutable struct Model
     modelType::DataType
 end
 
+Base.@kwdef mutable struct Relationship
+    field::String
+    targetModel::Union{DataType, Symbol, QuoteNode}
+    targetField::String
+    type::Symbol  # :hasOne, :hasMany, :belongsTo
+end
+
+
 # Global registry para associar os metadados do modelo
-const modelRegistry = Dict{DataType, Model}()
+# Global registry para associar os metadados do modelo (usando o nome do modelo como chave)
+const modelRegistry = Dict{Symbol, Model}()
+
+# Registrador de relações também indexado pelo nome do modelo
+const relationshipsRegistry = Dict{Symbol, Vector{Relationship}}()
 
 # ---------------------------
 # Helper: Mapear tipo SQL para tipo Julia
@@ -159,52 +171,89 @@ end
         email::String
     end
 """
-macro Model(modelName, colsExpr)
-    # Processa as colunas (espera-se uma tupla de tuplas: (nome, tipo, restrições))
+macro Model(modelName, colsExpr, relationshipsExpr=nothing)
+    # Processa as colunas como antes
     columnsList = colsExpr.args
     fieldExprs = []
     columnExprs = []
     for col in columnsList
-        # Obtém o nome e tipo da coluna
-        colName = String(strip(col.args[1]))
-        colType = String(strip(col.args[2]))
-        # Escapa a expressão das restrições
+        colName = string(col.args[1])
+        colType = string(col.args[2])
         constraintsExpr = esc(col.args[3])
-        # Cria a expressão que instancia Column
         push!(columnExprs, :( Column($colName, $colType, $constraintsExpr) ))
-        # Mapeia o tipo SQL para o tipo Julia e define o campo no struct
         juliaType = mapSqlTypeToJulia(colType)
         push!(fieldExprs, :( $(Symbol(colName)) :: $juliaType ))
     end
-    # Constrói a expressão de um vetor literal com as colunas
     local columnsVector = Expr(:vect, columnExprs...)
     structDef = quote
         Base.@kwdef mutable struct $modelName
             $(fieldExprs...)
         end
     end
+
     registration = quote
         local modelMeta = Model(string($(esc(modelName))), $columnsVector, $(esc(modelName)))
-        modelRegistry[$(esc(modelName))] = modelMeta
+        modelRegistry[nameof($(esc(modelName)))] = modelMeta
         local conn = dbConnection()
         migrate!(conn, modelMeta)
     end
+        
+    relRegistration = if !isnothing(relationshipsExpr)
+        let relationships = []
+            for rel in relationshipsExpr.args
+                field = rel.args[1]
+                target_expr = rel.args[2]
+                target_field = rel.args[3]
+                rel_type = rel.args[4]
+                push!(relationships, :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
+            end
+            quote
+                relationshipsRegistry[nameof($(esc(modelName)))] = [$((relationships)...)];
+            end
+        end
+    else
+        quote nothing end
+    end
+        
     return quote
         $structDef
         $registration
+        $relRegistration
     end
 end
+
+function resolveModel(modelRef)
+    if modelRef isa QuoteNode
+        modelRef = modelRef.value
+    end
+    if modelRef isa Symbol
+        # Tenta obter o tipo no módulo atual; ajuste se estiver em outro módulo
+        return Base.eval(@__MODULE__, modelRef)
+    elseif modelRef isa DataType
+        return modelRef
+    else
+        error("Referência de modelo inválida: $modelRef")
+    end
+end
+
 
 # ---------------------------
 # Helper: Retorna metadados do modelo a partir do registry
 # ---------------------------
 function modelConfig(model::DataType)
-    if haskey(modelRegistry, model)
-        return modelRegistry[model]
+    local key = nameof(model)
+    if haskey(modelRegistry, key)
+        return modelRegistry[key]
     else
-        error("Model not registered")
+        error("Model $(key) not registered")
     end
 end
+
+function getRelationships(model::DataType)
+    local key = nameof(model)
+    return get(relationshipsRegistry, key, [])
+end
+
 
 # ---------------------------
 # Helper: Obtém o último ID inserido via query
@@ -273,20 +322,80 @@ end
 dbConn() = dbConnection()
 
 function findMany(model::DataType; filter=missing)
-    conn = dbConn()
-    query = "SELECT * FROM " * modelConfig(model).name *
+    local resolved = resolveModel(model)
+    query = "SELECT * FROM " * modelConfig(resolved).name *
             (filter === missing ? "" : " WHERE " * filter)
-    stmt = DBInterface.prepare(conn, query)
-    df = DBInterface.execute(stmt, []) |> DataFrame
-    return [ instantiate(model, row) for row in eachrow(df) ]
+    local conn = dbConn()
+    local stmt = DBInterface.prepare(conn, query)
+    local df = DBInterface.execute(stmt, []) |> DataFrame
+    return [ instantiate(resolved, row) for row in eachrow(df) ]
 end
 
+"""
+    advancedFindMany(model::DataType; 
+                     joins=[], 
+                     filters="", 
+                     orderBy="", 
+                     limit::Union{Int,Nothing}=nothing, 
+                     offset::Union{Int,Nothing}=nothing)
+
+Realiza uma consulta avançada no modelo base, permitindo definir joins, filtros, ordenação e paginação.
+
+- `joins`: vetor de tuplas no formato `(tipo::Symbol, modelJoin::DataType, condição::String)`.  
+  *Exemplo*: `[(:INNER, Post, "User.id = Post.authorId")]`
+- `filters`: string com condições adicionais (ex.: `"User.name LIKE '%João%'"`).
+- `orderBy`: string definindo a ordenação (ex.: `"User.createdAt DESC"`).
+- `limit` e `offset`: para paginação.
+"""
+function advancedFindMany(model::DataType; 
+                          joins=[], 
+                          filters="", 
+                          orderBy="", 
+                          limit::Union{Int,Nothing}=nothing, 
+                          offset::Union{Int,Nothing}=nothing)
+    local resolved = resolveModel(model)
+    local baseTable = modelConfig(resolved).name
+    local query = "SELECT * FROM $baseTable"
+
+    # Adicionar cláusulas JOIN
+    for joinSpec in joins
+        joinType, joinModel, onCondition = joinSpec
+        local joinTable = modelConfig(resolveModel(joinModel)).name
+        query *= " $(uppercase(String(joinType))) JOIN $joinTable ON $onCondition"
+    end
+
+    # Filtros
+    if !isempty(filters)
+        query *= " WHERE $filters"
+    end
+
+    # Ordenação
+    if !isempty(orderBy)
+        query *= " ORDER BY $orderBy"
+    end
+
+    # Limite e Offset
+    if limit !== nothing
+        query *= " LIMIT $limit"
+        if offset !== nothing
+            query *= " OFFSET $offset"
+        end
+    end
+
+    local conn = dbConn()
+    local stmt = DBInterface.prepare(conn, query)
+    local df = DBInterface.execute(stmt, []) |> DataFrame
+    return [ instantiate(resolved, row) for row in eachrow(df) ]
+end
+
+
 function findFirst(model::DataType; filter=missing)
-    conn = dbConn()
-    query = "SELECT * FROM " * modelConfig(model).name *
-            (filter === missing ? "" : " WHERE " * filter) * " LIMIT 1"
-    res = DBInterface.execute(conn, query) |> collect
-    return isempty(res) ? nothing : instantiate(model, first(res))
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local query = "SELECT * FROM " * modelConfig(resolved).name *
+                  (filter === missing ? "" : " WHERE " * filter) * " LIMIT 1"
+    local res = DBInterface.execute(conn, query) |> collect
+    return isempty(res) ? nothing : instantiate(resolved, first(res))
 end
 
 function findFirstOrThrow(model::DataType; filter=filter)
@@ -296,12 +405,13 @@ function findFirstOrThrow(model::DataType; filter=filter)
 end
 
 function findUnique(model::DataType, uniqueField, value)
-    conn = dbConn()
-    tableName = modelConfig(model).name
-    query = "SELECT * FROM " * tableName * " WHERE " * uniqueField * " = ? LIMIT 1"
-    stmt = DBInterface.prepare(conn, query)
-    res = DBInterface.execute(stmt, [value]) |> collect
-    return isempty(res) ? nothing : instantiate(model, first(res))
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local tableName = modelConfig(resolved).name
+    local query = "SELECT * FROM " * tableName * " WHERE " * uniqueField * " = ? LIMIT 1"
+    local stmt = DBInterface.prepare(conn, query)
+    local res = DBInterface.execute(stmt, [value]) |> collect
+    return isempty(res) ? nothing : instantiate(resolved, first(res))
 end
 
 function findUniqueOrThrow(model::DataType, uniqueField, value)
@@ -311,11 +421,12 @@ function findUniqueOrThrow(model::DataType, uniqueField, value)
 end
 
 function create(model::DataType, data::Dict)
-    conn = dbConn()
-    modelFields = Set(String.(fieldnames(model)))
-    filtered = Dict(k => v for (k,v) in data if k in modelFields)
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local modelFields = Set(String.(fieldnames(resolved)))
+    local filtered = Dict(k => v for (k,v) in data if k in modelFields)
 
-    meta = modelConfig(model)
+    meta = modelConfig(resolved)
 
     # Verificar se há um campo UUID e gerar o UUID se necessário
     for col in meta.columns
@@ -337,23 +448,23 @@ function create(model::DataType, data::Dict)
     for col in meta.columns
         if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
             uniqueValue = filtered[col.name]
-            return findFirst(model; filter = "$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
+            return findFirst(resolved; filter = "$(col.name) = " * (isa(uniqueValue, String) ? "'$uniqueValue'" : string(uniqueValue)))
         end
     end
 
     # Se não houver, use LAST_INSERT_ID:
     id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
     id = first(DataFrame(id_result))[1]
-    pkCol = getPrimaryKeyColumn(model)
+    pkCol = getPrimaryKeyColumn(resolved)
     if pkCol !== nothing
-        return findFirst(model; filter = "$(pkCol.name) = $id")
+        return findFirst(resolved; filter = "$(pkCol.name) = $id")
     end
 
     # Buscar pelo campo UUID se necessário:
     for col in meta.columns
         if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
             uuid = filtered[col.name]
-            return findFirst(model; filter = "$(col.name) = '$uuid'")
+            return findFirst(resolved; filter = "$(col.name) = '$uuid'")
         end
     end
 
@@ -361,63 +472,71 @@ function create(model::DataType, data::Dict)
 end
 
 function update(model::DataType, filter::String, data::Dict)
-    conn = dbConn()
-    modelFields = Set(String.(fieldnames(model)))
-    filtered = Dict(k => v for (k,v) in data if k in modelFields)
-    assignments = join([ "$k = ?" for (k,_) in filtered ], ", ")
-    vals = collect(values(filtered))
-    query = "UPDATE " * modelConfig(model).name * " SET " * assignments * " WHERE " * filter
-    stmt = DBInterface.prepare(conn, query)
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local modelFields = Set(String.(fieldnames(resolved)))
+    local filtered = Dict(k => v for (k,v) in data if k in modelFields)
+    local assignments = join([ "$k = ?" for (k,_) in filtered ], ", ")
+    local vals = collect(values(filtered))
+    local query = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * filter
+    local stmt = DBInterface.prepare(conn, query)
     DBInterface.execute(stmt, vals)
-    return findFirst(model; filter = filter)
+    return findFirst(resolved; filter = filter)
 end
 
 function upsert(model::DataType, uniqueField, value, data::Dict)
-    found = findUnique(model, uniqueField, value)
+    local resolved = resolveModel(model)
+    local found = findUnique(resolved, uniqueField, value)
     if found === nothing
-        return create(model, data)
+        return create(resolved, data)
     else
-        f = "$uniqueField = " * (isa(value, String) ? "'$value'" : string(value))
-        return update(model, f, data)
+        local f = "$uniqueField = " * (isa(value, String) ? "'$value'" : string(value))
+        return update(resolved, f, data)
     end
 end
 
 function delete(model::DataType, filter::String)
-    conn = dbConn()
-    query = "DELETE FROM " * modelConfig(model).name * " WHERE " * filter
-    stmt = DBInterface.prepare(conn, query)
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local query = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * filter
+    local stmt = DBInterface.prepare(conn, query)
     DBInterface.execute(stmt, [])
     return true
 end
 
 function createMany(model::DataType, dataList::Vector)
-    return [ create(model, data) for data in dataList ]
+    local resolved = resolveModel(model)
+    return [ create(resolved, data) for data in dataList ]
 end
 
 function createManyAndReturn(model::DataType, dataList::Vector{Dict})
     createMany(model, dataList)
-    return findMany(model)
+    local resolved = resolveModel(model)
+    return findMany(resolved)
 end
 
 function updateMany(model::DataType, filter::String, data::Dict)
-    conn = dbConn()
-    assignments = join([ "$k = ?" for (k,_) in data ], ", ")
-    vals = collect(values(data))
-    query = "UPDATE " * modelConfig(model).name * " SET " * assignments * " WHERE " * filter
-    stmt = DBInterface.prepare(conn, query)
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local assignments = join([ "$k = ?" for (k,_) in data ], ", ")
+    local vals = collect(values(data))
+    local query = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * filter
+    local stmt = DBInterface.prepare(conn, query)
     DBInterface.execute(stmt, vals)
-    return findMany(model; filter = filter)
+    return findMany(resolved; filter = filter)
 end
 
 function updateManyAndReturn(model::DataType, filter::String, data::Dict)
     updateMany(model, filter, data)
-    return findMany(model; filter = filter)
+    local resolved = resolveModel(model)
+    return findMany(resolved; filter = filter)
 end
 
 function deleteMany(model::DataType, filter::String)
-    conn = dbConn()
-    query = "DELETE FROM " * modelConfig(model).name * " WHERE " * filter
-    stmt = DBInterface.prepare(conn, query)
+    local resolved = resolveModel(model)
+    local conn = dbConn()
+    local query = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * filter
+    local stmt = DBInterface.prepare(conn, query)
     DBInterface.execute(stmt, [])
     return true
 end
@@ -447,9 +566,10 @@ function delete(modelInstance)
 end
 
 function Base.filter(model::DataType; kwargs...)
-    conditions = [ "$k = " * (isa(v, String) ? "'$v'" : string(v)) for (k,v) in kwargs ]
-    filterStr = join(conditions, " AND ")
-    return findMany(model; filter=filterStr)
+    local resolved = resolveModel(model)
+    local conditions = [ "$k = " * (isa(v, String) ? "'$v'" : string(v)) for (k,v) in kwargs ]
+    local filterStr = join(conditions, " AND ")
+    return findMany(resolved; filter=filterStr)
 end
 
 
