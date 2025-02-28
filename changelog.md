@@ -1,13 +1,9 @@
 # Changelog
 ## [Unreleased]
 
-### Added
-- **More Complex SQL Operations**
-  - Support for joins, advanced filters, ordering, and pagination.
-- **Relationship between Models**
-  - Support for relationships between models, like foreign key.
-
 ### Upcoming
+- **More Complex SQL Operations**
+  - Support for advanced filters, ordering, and pagination.
 - **Security and SQL Injection Prevention**
   - Further input sanitization to complement prepared statements.
 - **Transaction Support**
@@ -18,15 +14,15 @@
   - Improve exception handling and add logs to facilitate debugging.
 - **SQL to Julia Type Mapping Expansion**
   - Include support for more types (e.g., DATE, TIMESTAMP, etc.).
-- **More Complex SQL Operations**
-  - Support for joins, advanced filters, ordering, and pagination.
 - **Optimization for Large Datasets**
   - Review the use of DataFrames and consider alternatives for better performance with large datasets.
 - **Macro Side Effects Review**
   - Adjust automatic execution (like calling migrate! within the @Model macro) to avoid surprises.
-- **Base Function Overriding**
-  - Rethink overriding functions (e.g., Base.filter) to avoid conflicts with the Julia ecosystem.
 
+## [0.2.0]
+### Added
+- **Relationship between Models**
+  - Support for relationships between models, like foreign key.
 
 ## [0.1.1] - 2025-02-18
 ### Added
