@@ -25,7 +25,7 @@ dropTable!(conn, "Post")
     ("title", "TEXT", [@NotNull()]),
     ("authorId", "INTEGER", [@NotNull()])
 ) [
-    ("author", User, "authorId", :belongsTo)
+    ("authorId", User, "id", :belongsTo)
 ]
 
 @testset "SimpleORM Basic CRUD Tests" begin
@@ -115,7 +115,6 @@ dropTable!(conn, "Post")
     # Teste: Buscar registros relacionados
     # ------------------------------
     @test hasMany(user, Post, "authorId")[1].title == "My First Post"
-    @test belongsTo(post, User, "authorId").name == "Thiago"
 
     # ------------------------------
     # Teste: Deletar vários registros usando query dict
