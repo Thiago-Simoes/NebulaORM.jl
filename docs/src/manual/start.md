@@ -37,13 +37,14 @@ user = create(User, userData)
 ```
 
 #### Search data
+Now queries use a dictionary format:
 ```
-foundUser = findFirst(User; filter="name = 'Thiago'")
+foundUser = findFirst(User; query=Dict("where" => Dict("name" => "Thiago")))
 ```
 
 #### Update data
 ```
-updatedUser = update(User, "id = $(user.id)", Dict("name" => "Thiago Updated"))
+updatedUser = update(User, Dict("where" => Dict("id" => user.id)), Dict("name" => "Thiago Updated"))
 ```
 
 #### Upsert data
@@ -79,7 +80,7 @@ manyUsers = findMany(User)
 
 #### Update many
 ```
-updatedMany = updateMany(User, "name LIKE 'Bob%'", Dict("name" => "Bob Updated"))
+updatedMany = updateMany(User, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
 ```
 
 #### Filter
@@ -93,5 +94,5 @@ filteredUsers = filter(User; name="Dan")
 
 #### Delete multiple records
 ```
-deleteManyResult = deleteMany(User, "1=1")
+deleteManyResult = deleteMany(User, Dict("where" => "1=1"))
 ```

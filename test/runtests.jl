@@ -4,7 +4,7 @@ Pkg.activate("..")
 # ... incluir outros arquivos de teste conforme necessário ...
 
 using Test
-using ORM
+using Nebula
 
 # Setup: Obter conexão e dropar as tabelas de teste, se existirem
 conn = dbConnection()

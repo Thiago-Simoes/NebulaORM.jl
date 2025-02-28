@@ -5,7 +5,8 @@
 - Models: conversion, instantiation;
 - CRUD functions;
 - Database connection using `.env` file;
-- MySQL Support.
+- MySQL Support;
+- Relationships.
 
 ### Index
 
