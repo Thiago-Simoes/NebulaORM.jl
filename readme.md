@@ -1,4 +1,4 @@
-# ORM.jl
+# LightORM.jl
 
 ## Objective
 
