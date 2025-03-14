@@ -1,4 +1,4 @@
-# LightORM.jl
+# Nebula.jl
 
 ## Objective
 
