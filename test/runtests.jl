@@ -13,22 +13,22 @@ dropTable!(conn, "Post")
 
 # Define um modelo de teste com chave primária "id"
 @Model User (
-    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
-    ("name", "TEXT", [@NotNull()]),
-    ("email", "TEXT", [@Unique(), @NotNull()])
+    ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
+    ("name", @TEXT, [@NotNull()]),
+    ("email", @TEXT, [@Unique(), @NotNull()])
 ) [
     ("posts", Post, "authorId", :hasMany)
 ]
 
 @Model Post (
-    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
-    ("title", "TEXT", [@NotNull()]),
-    ("authorId", "INTEGER", [@NotNull()])
+    ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
+    ("title", @TEXT, [@NotNull()]),
+    ("authorId", @INTEGER, [@NotNull()])
 ) [
     ("authorId", User, "id", :belongsTo)
 ]
 
-@testset "SimpleORM Basic CRUD Tests" begin
+@testset "Nebula Basic CRUD Tests" begin
     # ------------------------------
     # Teste: Criar um registro
     # ------------------------------
@@ -90,8 +90,8 @@ dropTable!(conn, "Post")
     # ------------------------------
     # Teste: Atualizar vários registros usando query dict
     # ------------------------------
-    updatedMany = updateMany(User, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
-    for u in updatedMany
+    uMany = updateMany(User, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
+    for u in uMany
         @test u.name == "Bob Updated"
     end
 
@@ -106,6 +106,8 @@ dropTable!(conn, "Post")
     # ------------------------------
     # Teste: Criar registro relacionado (Post)
     # ------------------------------
+    userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
+    user = create(User, userData)
     postData = Dict("title" => "My First Post", "authorId" => user.id)
     post = create(Post, postData)
     @test post.title == "My First Post"
@@ -121,6 +123,23 @@ dropTable!(conn, "Post")
     # ------------------------------
     deleteManyResult = deleteMany(User, Dict("where" => "1=1"))
     @test deleteManyResult === true
+end
+
+@testset "Nebula Relationships Tests" begin
+    userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
+    user = create(User, userData)
+
+    foundUser = findFirst(User; query=Dict("where" => Dict("name" => "Thiago")))
+
+    postData = Dict("title" => "My First Post", "authorId" => user.id)
+    post = create(Post, postData)
+
+    userWithPosts = findFirst(User; query=Dict("where" => Dict("name" => "Thiago"), "include" => [Post]))
+    @test length(userWithPosts["Post"]) == 1
+    @test typeof(userWithPosts["Post"][1]) <: Post
+    @test userWithPosts["Post"][1].title == "My First Post"
+    @test userWithPosts["Post"][1].authorId == user.id
+
 end
 
 # Cleanup: Opcionalmente dropar as tabelas de teste

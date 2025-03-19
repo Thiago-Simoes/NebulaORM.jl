@@ -12,12 +12,18 @@
   - Implement a connection pool to improve performance and prevent database overload.
 - **Error Handling and Logging**
   - Improve exception handling and add logs to facilitate debugging.
+
+## [0.2.1]
+### Added
+- **More Complex SQL Operations**
+  - Support for advanced filters, ordering, and pagination.
 - **SQL to Julia Type Mapping Expansion**
   - Include support for more types (e.g., DATE, TIMESTAMP, etc.).
-- **Optimization for Large Datasets**
-  - Review the use of DataFrames and consider alternatives for better performance with large datasets.
-- **Macro Side Effects Review**
-  - Adjust automatic execution (like calling migrate! within the @Model macro) to avoid surprises.
+## Improved
+- **Type Mapping using Macros**
+  - Each type can be declared using a macro, instead of a function.
+- **Better folders/files organization**
+  - Improved readability and maintainability
 
 ## [0.2.0]
 ### Added
