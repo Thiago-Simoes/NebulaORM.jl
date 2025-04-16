@@ -7,6 +7,7 @@ using DotEnv
 using DataFrames
 using Dates
 
+include("./pool.jl")
 include("./dbconnection.jl")
 include("./types.jl")
 include("./keys.jl")

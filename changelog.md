@@ -6,12 +6,16 @@
   - Support for advanced filters, ordering, and pagination.
 - **Security and SQL Injection Prevention**
   - Further input sanitization to complement prepared statements.
-- **Transaction Support**
-  - Add transaction mechanisms (begin, commit, and rollback) for atomic operations.
-- **Connection Pooling**
-  - Implement a connection pool to improve performance and prevent database overload.
 - **Error Handling and Logging**
   - Improve exception handling and add logs to facilitate debugging.
+
+## [0.2.2]
+### Added
+- **Connection Pooling**
+  - Implement a connection pool to improve performance and prevent database overload.
+### Improved
+- **Transaction Support**
+  - Add transaction mechanisms (begin, commit, and rollback) for atomic operations.
 
 ## [0.2.1]
 ### Added
