@@ -6,6 +6,7 @@ using UUIDs
 using DotEnv
 using DataFrames
 using Dates
+using Logging
 
 include("./pool.jl")
 include("./dbconnection.jl")

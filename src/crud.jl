@@ -1,7 +1,52 @@
+# Logger initialization based on environment variable "LOG_LEVEL"
+function initLogger()
+    local lvl = lowercase(get(ENV, "NEBULA_LOG_LEVEL", "info"))
+    local logLevel = lvl == "error" ? Logging.Error :
+                     lvl == "warn"  ? Logging.Warn  :
+                     lvl == "debug" ? Logging.Debug : Logging.Info
+    global_logger(SimpleLogger(stderr, logLevel))
+    @info "Logger configured" level=logLevel
+end
+initLogger()
+
+# Updated executeQuery function using logging
+function executeQuery(conn::MySQL.Connection, stmt::MySQL.Statement, args=[]; useTransaction::Bool=true)
+    @info "Executing query" query=stmt args=args transaction=useTransaction
+    try
+        if useTransaction
+            ret = DataFrame()
+            DBInterface.transaction(conn) do
+                ret = DBInterface.execute(stmt, args)
+            end
+            return ret
+        else
+            return DBInterface.execute(stmt, args)
+        end
+    catch e
+        @error "SQL error occurred $(e)" query=stmt args=args
+    end
+end
+function executeQuery(conn::MySQL.Connection, stmt::String; useTransaction::Bool=true)
+    @info "Executing query" query=stmt transaction=useTransaction
+    try
+        if useTransaction
+            ret = DataFrame()
+            DBInterface.transaction(conn) do
+                ret = DBInterface.execute(conn, stmt)
+            end
+            return ret
+        else
+            return DBInterface.execute(conn, stmt)
+        end
+    catch e
+        @error "SQL error occurred $(e)" query=stmt
+    end
+end
+
 function dropTable!(conn, tableName::String)
     query = "DROP TABLE IF EXISTS " * tableName
     stmt = DBInterface.prepare(conn, query)
-    DBInterface.execute(stmt, [])
+    executeQuery(conn, stmt, [])
 end
 
 
@@ -11,7 +56,7 @@ function findMany(model::DataType; query::Dict = Dict())
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
     local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = DBInterface.execute(stmt, []) |> DataFrame
+    local df = executeQuery(conn, stmt, []) |> DataFrame
     return [ instantiate(resolved, row) for row in eachrow(df) ]
 end
 
@@ -25,7 +70,7 @@ function advancedFindMany(model::DataType; query::AbstractDict = Dict())
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
     local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = DBInterface.execute(stmt, []) |> DataFrame
+    local df = executeQuery(conn, stmt, []) |> DataFrame
     local results = [ instantiate(resolved, row) for row in eachrow(df) ]
 
     if haskey(query, "include")
@@ -78,7 +123,7 @@ function findFirst(model::DataType; query::Dict = Dict())
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
     local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = DBInterface.execute(stmt, []) |> DataFrame
+    local df = executeQuery(conn, stmt, []) |> DataFrame
     if isempty(df)
         return nothing
     end
@@ -149,7 +194,7 @@ function findUnique(model::DataType, uniqueField, value; query::AbstractDict = D
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
     local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = DBInterface.execute(stmt, []) |> DataFrame
+    local df = executeQuery(conn, stmt, []) |> DataFrame
     return isempty(df) ? nothing : instantiate(resolved, first(df))
 end
 
@@ -179,7 +224,7 @@ function create(model::DataType, data::Dict)
     local vals = collect(values(filtered))
     local queryStr = "INSERT INTO " * meta.name * " (" * cols * ") VALUES (" * placeholders * ")"
     local stmt = DBInterface.prepare(conn, queryStr)
-    DBInterface.execute(stmt, vals)
+    executeQuery(conn, stmt, vals)
 
     for col in meta.columns
         if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
@@ -188,8 +233,8 @@ function create(model::DataType, data::Dict)
         end
     end
 
-    local id_result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID()")
-    local id = first(DataFrame(id_result))[1]
+    local id_result = executeQuery(conn, "SELECT LAST_INSERT_ID()"; useTransaction=true) |> DataFrame
+    local id = first(id_result)[1]
     local pkCol = getPrimaryKeyColumn(resolved)
     if pkCol !== nothing
         return findFirst(resolved; query = Dict("where" => Dict(pkCol.name => id)))
@@ -229,7 +274,7 @@ function update(model::DataType, query::AbstractDict, data::Dict)
 
     local updateQuery = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * whereClause
     local stmt = DBInterface.prepare(conn, updateQuery)
-    DBInterface.execute(stmt, vals)
+    executeQuery(conn, stmt, vals)
     return findFirst(resolved; query=query)
 end
 
@@ -263,7 +308,7 @@ function delete(model::DataType, query::Dict)
 
     local deleteQuery = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * whereClause
     local stmt = DBInterface.prepare(conn, deleteQuery)
-    DBInterface.execute(stmt, [])
+    executeQuery(conn, stmt, [])
     return true
 end
 
@@ -301,7 +346,7 @@ function updateMany(model::DataType, query, data::Dict)
                         " SET " * assignments *
                         " WHERE " * whereClause
     local stmt = DBInterface.prepare(conn, updateQuery)
-    DBInterface.execute(stmt, vals)
+    executeQuery(conn, stmt, vals)
     return findMany(resolved; query=q)
 end
 
@@ -332,7 +377,7 @@ function deleteMany(model::DataType, query=Dict())
     local deleteQuery = "DELETE FROM " * modelConfig(resolved).name *
                         " WHERE " * whereClause
     local stmt = DBInterface.prepare(conn, deleteQuery)
-    DBInterface.execute(stmt, [])
+    executeQuery(conn, stmt, [])
     return true
 end
 

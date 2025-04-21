@@ -6,8 +6,6 @@
   - Support for advanced filters, ordering, and pagination.
 - **Security and SQL Injection Prevention**
   - Further input sanitization to complement prepared statements.
-- **Error Handling and Logging**
-  - Improve exception handling and add logs to facilitate debugging.
 
 ## [0.2.2]
 ### Added
@@ -16,6 +14,8 @@
 ### Improved
 - **Transaction Support**
   - Add transaction mechanisms (begin, commit, and rollback) for atomic operations.
+- **Error Handling and Logging**
+  - Improved exception handling and add logs to facilitate debugging.
 
 ## [0.2.1]
 ### Added
