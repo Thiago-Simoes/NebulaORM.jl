@@ -142,6 +142,34 @@ end
 
 end
 
+@testset "Nebula Pagination Tests" begin
+    # Cria registros para paginação
+    # Limpa registros anteriores (se necessário)
+    deleteMany(User, Dict("where" => "1=1"))
+    
+    # Cria uma lista de 5 usuários com nomes numerados
+    usersData = [ Dict("name" => "User $(i)", "email" => "user$(i)@example.com", "cpf" => string(1000 + i)) for i in 1:5 ]
+    createdUsers = createMany(User, usersData)
+    @test length(createdUsers) == 5
+
+    # Teste: Recupera 2 usuários por vez, começando do primeiro
+    page1 = findMany(User; query=Dict("limit" => 2, "offset" => 0, "orderBy" => "id"))
+    @test length(page1) == 2
+    @test page1[1].name == "User 1"
+    @test page1[2].name == "User 2"
+
+    # Teste: Recupera os próximos 2 usuários a partir do terceiro
+    page2 = findMany(User; query=Dict("limit" => 2, "offset" => 2, "orderBy" => "id"))
+    @test length(page2) == 2
+    @test page2[1].name == "User 3"
+    @test page2[2].name == "User 4"
+
+    # Teste: Recupera os registros restantes
+    page3 = findMany(User; query=Dict("limit" => 2, "offset" => 4, "orderBy" => "id"))
+    @test length(page3) == 1
+    @test page3[1].name == "User 5"
+end
+
 # Cleanup: Opcionalmente dropar as tabelas de teste
 # dropTable!(conn, "User")
 # dropTable!(conn, "Post")

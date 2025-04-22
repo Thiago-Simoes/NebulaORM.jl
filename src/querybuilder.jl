@@ -1,4 +1,3 @@
-
 # ---------------------------
 # Query Builder Inspired by Prisma.io
 # ---------------------------
@@ -126,3 +125,21 @@ function normalizeQueryDict(query::AbstractDict)
     end
     return normalized
 end
+
+using Dates
+
+# Função interna para escapar strings (sem aspas externas)
+function sql_escape_raw(value::AbstractString)::String
+    clean = replace(value, "'" => "''")                          # Escapa aspas simples
+    clean = replace(clean, r"(--|#|;)" => "")                     # Remove comentários e separadores
+    clean = replace(clean, r"[\x00-\x1F\x7F]" => "")              # Remove caracteres de controle ASCII
+    clean = String(normalize(clean, stripmark=true, compat=true))  # Normaliza Unicode
+    return clean
+end
+
+# Overloads para sql_escape
+sql_escape(x::Nothing) = "NULL"
+sql_escape(x::Bool) = x ? "TRUE" : "FALSE"
+sql_escape(x::Number) = string(x)
+sql_escape(x::Date) = "'$(Dates.format(x, "yyyy-mm-dd"))'"
+sql_escape(x::AbstractString) = "'" * sql_escape_raw(x) * "'"

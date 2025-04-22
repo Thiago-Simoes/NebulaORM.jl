@@ -96,3 +96,20 @@ filteredUsers = filter(User; name="Dan")
 ```
 deleteManyResult = deleteMany(User, Dict("where" => "1=1"))
 ```
+
+#### Update Many and Return
+Updates multiple records and returns the updated records.
+```julia
+updatedManyAndReturn = updateManyAndReturn(User, Dict("where" => Dict("name" => "Carol")), Dict("name" => "Carol Updated"))
+```
+
+#### Pagination
+Retrieve query results using limit, offset, and ordering.
+```julia
+# Retrieve first 2 users
+page1 = findMany(User; query=Dict("limit" => 2, "offset" => 0, "orderBy" => "id"))
+# Retrieve next 2 users starting from the third record
+page2 = findMany(User; query=Dict("limit" => 2, "offset" => 2, "orderBy" => "id"))
+# Retrieve remaining records
+page3 = findMany(User; query=Dict("limit" => 2, "offset" => 4, "orderBy" => "id"))
+```

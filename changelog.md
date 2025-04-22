@@ -1,7 +1,6 @@
 # Changelog
-## [Unreleased]
 
-### Upcoming
+## [0.2.3]
 - **More Complex SQL Operations**
   - Support for advanced filters, ordering, and pagination.
 - **Security and SQL Injection Prevention**
