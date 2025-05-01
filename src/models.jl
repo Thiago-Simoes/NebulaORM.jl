@@ -137,9 +137,9 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
     if __ORM_INITIALIZED__
         register_orm()
     end
-    quote
-        $structDef
-        __ORM_MODELS__[Symbol(string($(esc(modelName))))] = ($columnsVector, $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
+    return quote
+        $(structDef.args...)   # <<<<< executa de verdade o código da struct
+        __ORM_MODELS__[Symbol(string($(QuoteNode(modelName))))] = ($columnsVector, $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
     end
 end
 
