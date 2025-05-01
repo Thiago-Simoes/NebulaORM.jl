@@ -26,6 +26,12 @@ const modelRegistry = Dict{Symbol, Model}()
 # Global registry for associating model relationships (using the model name as key)
 const relationshipsRegistry = Dict{Symbol, Vector{Relationship}}()
 
+function __init__()
+    DotEnv.load!() 
+    initLogger()
+end
+    
+
 
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,

@@ -7,7 +7,6 @@ function initLogger()
     global_logger(SimpleLogger(stderr, logLevel))
     @info "Logger configured" level=logLevel
 end
-initLogger()
 
 # Updated executeQuery function using logging
 function executeQuery(conn::MySQL.Connection, stmt::MySQL.Statement, args=[]; useTransaction::Bool=true)
