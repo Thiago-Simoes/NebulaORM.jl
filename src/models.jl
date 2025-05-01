@@ -134,12 +134,17 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
             $(fieldExprs...)
         end
     end
-    if __ORM_INITIALIZED__
-        register_orm()
-    end
-    return quote
-        $(structDef.args...)   # <<<<< executa de verdade o código da struct
-        __ORM_MODELS__[Symbol(string($(QuoteNode(modelName))))] = ($columnsVector, $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
+    quote
+        $(structDef.args...)  # Define a struct
+        if !isdefined(@__MODULE__, :__ORM_MODELS__)
+            const __ORM_MODELS__ = Dict{Symbol, Tuple{Any, Any}}()
+        end
+        __ORM_MODELS__[Symbol(string($(esc(modelName))))] = ($columnsVector, $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
+        # Registra imediatamente o modelo e suas relações
+        register_model(string($(esc(modelName))), $columnsVector, Base.eval(Main, $(esc(modelName))))
+        if $(relationshipsExpr === nothing ? false : true)
+            register_relationships(string($(esc(modelName))), $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
+        end
     end
 end
 

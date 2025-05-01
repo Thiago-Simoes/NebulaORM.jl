@@ -346,6 +346,10 @@ function updateMany(model::DataType, query, data::Dict)
                         " WHERE " * whereClause
     local stmt = DBInterface.prepare(conn, updateQuery)
     executeQuery(conn, stmt, vals)
+    # Caso o 'where' seja um Dict, mescle com os dados atualizados.
+    if isa(q["where"], Dict)
+        q["where"] = merge(q["where"], data)
+    end
     return findMany(resolved; query=q)
 end
 
