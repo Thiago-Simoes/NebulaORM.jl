@@ -70,20 +70,20 @@ function register_relationships(modelName, relationshipsExpr)
                           (original_sym == :hasMany ? :belongsTo : original_sym)
             # Converter target_expr explicitamente
             target_model = convert_target_model(target_expr)
-            # Criar objeto Relationship diretamente usando target_model
+            # Criar objeto Relationship diretamente usando target_model (relação direta)
             push!(relationships, Relationship(string(field),
                                                 target_model,
                                                 string(target_field),
                                                 rel_type))
-            # Captura target_model em tm para uso no bloco
+            # Captura target_model em tm para uso no bloco reverso
             tm = target_model
             push!(reverseBlocks, :( begin
                     local revRel = Relationship(string("reverse_" * string($field)),
-                                                QuoteNode($modelName),
+                                                resolveModel(Symbol($modelName)),
                                                 string($field),
                                                 Symbol($reverse_sym))
-                    local targetModel = resolveModel($(QuoteNode(tm)))
-                    if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)),
+                    local targetModel = resolveModel(Symbol($tm))
+                    if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == resolveModel(Symbol($modelName)),
                                 get(relationshipsRegistry, nameof(targetModel), []))
                         if haskey(relationshipsRegistry, nameof(targetModel))
                             push!(relationshipsRegistry[nameof(targetModel)], revRel)
@@ -102,12 +102,12 @@ function register_relationships(modelName, relationshipsExpr)
 end
 
 # ---------------------------
-# Macro @Model: Define the model struct and register it
+# Macro @Model: Define the model struct and metadata
 # ---------------------------
 """
         macro Model(modelName, colsExpr)
 
-    Generate a model struct definition and register it in the global model registry.
+    Generate a model struct definition and metadata for later registration.
     
     Exemplo:
     @Model User (
@@ -134,16 +134,12 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
             $(fieldExprs...)
         end
     end
-    # Alteração: utilizar o tipo definido (esc(modelName)) em vez de um Symbol
-    modelRegCall = :( register_model(string($(QuoteNode(modelName))), $columnsVector, $(esc(modelName))) )
-    relRegCall = if relationshipsExpr === nothing
-                    :( nothing )
-                 else
-                    :( register_relationships($(esc(modelName)), $(esc(relationshipsExpr))) )
-                 end
-    return quote
+    if __ORM_INITIALIZED__
+        register_orm()
+    end
+    quote
         $structDef
-        ($modelRegCall, $relRegCall)
+        __ORM_MODELS__[Symbol(string($(esc(modelName))))] = ($columnsVector, $(relationshipsExpr === nothing ? nothing : esc(relationshipsExpr)))
     end
 end
 
@@ -221,4 +217,18 @@ function instantiate(model::DataType, record)
         end
     end
     return model(args...)
+end
+
+# ---------------------------
+# ORM Initialization
+# ---------------------------
+function register_orm()
+    for (model_sym, (columnsVector, relationshipsExpr)) in __ORM_MODELS__
+        # Registre o modelo e migre (efeitos colaterais) – funções register_model e register_relationships podem ser invocadas aqui.
+        _ = register_model(string(model_sym), columnsVector, Base.eval(Main, model_sym))
+        if relationshipsExpr !== nothing
+            register_relationships(string(model_sym), relationshipsExpr)
+        end
+    end
+    return nothing
 end
