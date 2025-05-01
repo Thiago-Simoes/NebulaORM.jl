@@ -70,15 +70,34 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
 
     relRegistration = if !isnothing(relationshipsExpr)
         let relationships = []
+            reverseBlocks = [] 
             for rel in relationshipsExpr.args
                 field = rel.args[1]
                 target_expr = rel.args[2]
                 target_field = rel.args[3]
                 rel_type = rel.args[4]
-                push!(relationships, :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
+                local rt = rel_type isa QuoteNode ? rel_type.value : rel_type
+                local original_sym = rt isa Symbol ? rt : Symbol(string(rt))
+                local reverse_sym = original_sym == :belongsTo ? :hasMany :
+                                    (original_sym == :hasMany ? :belongsTo : original_sym)
+                push!(relationships, 
+                    :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
+                push!(reverseBlocks, :( begin
+                    local revRel = Relationship(string("reverse_" * string($field)), $(QuoteNode(modelName)), string($target_field), $reverse_sym)
+                    local targetModel = resolveModel($(QuoteNode(target_expr)))
+                    if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)), 
+                            get(relationshipsRegistry, nameof(targetModel), []))
+                        if haskey(relationshipsRegistry, nameof(targetModel))
+                            push!(relationshipsRegistry[nameof(targetModel)], revRel)
+                        else
+                            relationshipsRegistry[nameof(targetModel)] = [revRel]
+                        end
+                    end
+                end ))
             end
             quote
-                relationshipsRegistry[nameof($(esc(modelName)))] = [$((relationships)...)];
+                relationshipsRegistry[Symbol(nameof($(esc(modelName))))] = [$((relationships)...)];
+                nothing
             end
         end
     else

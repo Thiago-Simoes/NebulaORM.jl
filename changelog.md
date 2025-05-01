@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.4]
+### Improved
+- New relationships can be added without been declared before.
+
 ## [0.2.3]
 - **More Complex SQL Operations**
   - Support for advanced filters, ordering, and pagination.

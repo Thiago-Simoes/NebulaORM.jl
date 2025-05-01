@@ -16,9 +16,7 @@ dropTable!(conn, "Post")
     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
     ("name", @TEXT, [@NotNull()]),
     ("email", @TEXT, [@Unique(), @NotNull()])
-) [
-    ("posts", Post, "authorId", :hasMany)
-]
+) []
 
 @Model Post (
     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
