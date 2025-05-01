@@ -25,7 +25,81 @@ function migrate!(conn, model::Model)
     DBInterface.execute(stmt, [])
 end
 
+function register_model(modelName, columnsVector, modelStruct)
+    local modelMeta = Model(string(modelName), columnsVector, modelStruct)
+    modelRegistry[Symbol(modelName)] = modelMeta
+    local conn = dbConnection()
+    migrate!(conn, modelMeta)
+    return modelMeta
+end
 
+function get_rel_property(rel, i)
+    if rel isa Expr
+        return rel.args[i]
+    elseif rel isa Tuple
+        return rel[i]
+    else
+        error("Unsupported relationship type")
+    end
+end
+
+function convert_target_model(target_expr)
+    if target_expr isa String
+        return Symbol(target_expr)
+    elseif target_expr isa Expr && target_expr.head == :string
+        return Symbol(eval(target_expr))
+    elseif target_expr isa Symbol || target_expr isa DataType || target_expr isa QuoteNode
+        return target_expr
+    else
+        error("Unsupported type for target_model: $(typeof(target_expr))")
+    end
+end
+
+function register_relationships(modelName, relationshipsExpr)
+    let relationships = []
+        reverseBlocks = []
+        # Usar relationshipsExpr diretamente, pois agora pode ser um vetor de Tuples ou Exprs
+        for rel in relationshipsExpr
+            field = get_rel_property(rel, 1)
+            target_expr = get_rel_property(rel, 2)
+            target_field = get_rel_property(rel, 3)
+            rel_type = get_rel_property(rel, 4)
+            rt = rel_type isa QuoteNode ? rel_type.value : rel_type
+            original_sym = rt isa Symbol ? rt : Symbol(string(rt))
+            reverse_sym = original_sym == :belongsTo ? :hasMany :
+                          (original_sym == :hasMany ? :belongsTo : original_sym)
+            # Converter target_expr explicitamente
+            target_model = convert_target_model(target_expr)
+            # Criar objeto Relationship diretamente usando target_model
+            push!(relationships, Relationship(string(field),
+                                                target_model,
+                                                string(target_field),
+                                                rel_type))
+            # Captura target_model em tm para uso no bloco
+            tm = target_model
+            push!(reverseBlocks, :( begin
+                    local revRel = Relationship(string("reverse_" * string($field)),
+                                                QuoteNode($modelName),
+                                                string($field),
+                                                Symbol($reverse_sym))
+                    local targetModel = resolveModel($(QuoteNode(tm)))
+                    if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)),
+                                get(relationshipsRegistry, nameof(targetModel), []))
+                        if haskey(relationshipsRegistry, nameof(targetModel))
+                            push!(relationshipsRegistry[nameof(targetModel)], revRel)
+                        else
+                            relationshipsRegistry[nameof(targetModel)] = [revRel]
+                        end
+                    end
+            end))
+        end
+        relationshipsRegistry[Symbol(modelName)] = relationships
+        for block in reverseBlocks
+            eval(block)
+        end
+    end
+    return nothing
+end
 
 # ---------------------------
 # Macro @Model: Define the model struct and register it
@@ -60,54 +134,16 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
             $(fieldExprs...)
         end
     end
-
-    registration = quote
-        local modelMeta = Model(string($(esc(modelName))), $columnsVector, $(esc(modelName)))
-        modelRegistry[nameof($(esc(modelName)))] = modelMeta
-        local conn = dbConnection()
-        migrate!(conn, modelMeta)
-    end
-
-    relRegistration = if !isnothing(relationshipsExpr)
-        let relationships = []
-            reverseBlocks = [] 
-            for rel in relationshipsExpr.args
-                field = rel.args[1]
-                target_expr = rel.args[2]
-                target_field = rel.args[3]
-                rel_type = rel.args[4]
-                local rt = rel_type isa QuoteNode ? rel_type.value : rel_type
-                local original_sym = rt isa Symbol ? rt : Symbol(string(rt))
-                local reverse_sym = (original_sym == :belongsTo ? :hasMany :
-                                    (original_sym == :hasMany ? :belongsTo : original_sym)) |> QuoteNode
-                push!(relationships, 
-                    :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
-                push!(reverseBlocks, :( begin
-                    local revRel = Relationship(string("reverse_" * string($field)), $(QuoteNode(modelName)), string($field), Symbol($reverse_sym))
-                    local targetModel = resolveModel($(QuoteNode(target_expr)))
-                    if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)), 
-                            get(relationshipsRegistry, nameof(targetModel), []))
-                        if haskey(relationshipsRegistry, nameof(targetModel))
-                            push!(relationshipsRegistry[nameof(targetModel)], revRel)
-                        else
-                            relationshipsRegistry[nameof(targetModel)] = [revRel]
-                        end
-                    end
-                end ))
-            end
-            quote
-                relationshipsRegistry[Symbol(nameof($(esc(modelName))))] = [$((relationships)...)];
-                $(reverseBlocks...)
-            end
-        end
-    else
-        quote nothing end
-    end
-
+    # Alteração: utilizar o tipo definido (esc(modelName)) em vez de um Symbol
+    modelRegCall = :( register_model(string($(QuoteNode(modelName))), $columnsVector, $(esc(modelName))) )
+    relRegCall = if relationshipsExpr === nothing
+                    :( nothing )
+                 else
+                    :( register_relationships($(esc(modelName)), $(esc(relationshipsExpr))) )
+                 end
     return quote
         $structDef
-        $registration
-        $relRegistration
+        ($modelRegCall, $relRegCall)
     end
 end
 
