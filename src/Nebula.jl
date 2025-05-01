@@ -1,4 +1,4 @@
-module Nebula
+module NebulaORM
 
 using DBInterface
 using MySQL

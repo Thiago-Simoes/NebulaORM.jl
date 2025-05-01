@@ -1,4 +1,4 @@
-# Nebula.jl
+# NebulaORM.jl
 
 ## Objective
 

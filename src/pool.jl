@@ -15,7 +15,7 @@ function create_connection()
     dbPassword = ENV["DB_PASSWORD"]
     dbName     = ENV["DB_NAME"]
     dbPort     = parse(Int, string(ENV["DB_PORT"]))
-    return DBInterface.connect(MySQL.Connection, dbHost, dbUser, dbPassword, db=dbName, port=dbPort)
+    return DBInterface.connect(MySQL.Connection, dbHost, dbUser, dbPassword, db=dbName, port=dbPort, reconnect=true)
 end
 
 function init_pool()
@@ -53,7 +53,7 @@ function getConnection()
             end
         end
     end
-    return validate_connection(conn)
+    return conn
 end
 
 function releaseConnection(conn)

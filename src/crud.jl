@@ -1,6 +1,6 @@
 # Logger initialization based on environment variable "LOG_LEVEL"
 function initLogger()
-    local lvl = lowercase(get(ENV, "NEBULA_LOG_LEVEL", "info"))
+    local lvl = lowercase(get(ENV, "NebulaORM_LOG_LEVEL", "info"))
     local logLevel = lvl == "error" ? Logging.Error :
                      lvl == "warn"  ? Logging.Warn  :
                      lvl == "debug" ? Logging.Debug : Logging.Info

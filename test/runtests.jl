@@ -4,7 +4,7 @@ Pkg.activate("..")
 # ... incluir outros arquivos de teste conforme necessário ...
 
 using Test
-using Nebula
+using NebulaORM
 
 # Setup: Obter conexão e dropar as tabelas de teste, se existirem
 conn = dbConnection()
@@ -28,7 +28,7 @@ dropTable!(conn, "Post")
     ("authorId", User, "id", :belongsTo)
 ]
 
-@testset "Nebula Basic CRUD Tests" begin
+@testset "NebulaORM Basic CRUD Tests" begin
     # ------------------------------
     # Teste: Criar um registro
     # ------------------------------
@@ -125,7 +125,7 @@ dropTable!(conn, "Post")
     @test deleteManyResult === true
 end
 
-@testset "Nebula Relationships Tests" begin
+@testset "NebulaORM Relationships Tests" begin
     userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
     user = create(User, userData)
 
@@ -142,7 +142,7 @@ end
 
 end
 
-@testset "Nebula Pagination Tests" begin
+@testset "NebulaORM Pagination Tests" begin
     # Cria registros para paginação
     # Limpa registros anteriores (se necessário)
     deleteMany(User, Dict("where" => "1=1"))
