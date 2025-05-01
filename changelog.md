@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.5]
+Package features are nearly complete for version 1, with release preparations underway.
+
+### Fixed
+- Fixed relationships definition error
+
+### Test Summary
+Test Summary:                   | Pass  Total  Time
+NebulaORM                       |   28     28  8.0s
+  NebulaORM Basic CRUD Tests    |   15     15  7.0s
+  NebulaORM Relationships Tests |    4      4  0.6s
+  NebulaORM Pagination Tests    |    9      9  0.4s
+     Testing NebulaORM tests passed 
+
 ## [0.2.4]
 ### Improved
 - New relationships can be added without been declared before.

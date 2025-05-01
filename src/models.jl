@@ -78,12 +78,12 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
                 rel_type = rel.args[4]
                 local rt = rel_type isa QuoteNode ? rel_type.value : rel_type
                 local original_sym = rt isa Symbol ? rt : Symbol(string(rt))
-                local reverse_sym = original_sym == :belongsTo ? :hasMany :
-                                    (original_sym == :hasMany ? :belongsTo : original_sym)
+                local reverse_sym = (original_sym == :belongsTo ? :hasMany :
+                                    (original_sym == :hasMany ? :belongsTo : original_sym)) |> QuoteNode
                 push!(relationships, 
                     :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
                 push!(reverseBlocks, :( begin
-                    local revRel = Relationship(string("reverse_" * string($field)), $(QuoteNode(modelName)), string($target_field), $reverse_sym)
+                    local revRel = Relationship(string("reverse_" * string($field)), $(QuoteNode(modelName)), string($field), Symbol($reverse_sym))
                     local targetModel = resolveModel($(QuoteNode(target_expr)))
                     if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)), 
                             get(relationshipsRegistry, nameof(targetModel), []))
@@ -97,7 +97,7 @@ macro Model(modelName, colsExpr, relationshipsExpr=nothing)
             end
             quote
                 relationshipsRegistry[Symbol(nameof($(esc(modelName))))] = [$((relationships)...)];
-                nothing
+                $(reverseBlocks...)
             end
         end
     else
