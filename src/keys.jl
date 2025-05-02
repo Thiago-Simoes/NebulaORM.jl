@@ -13,6 +13,10 @@ function NotNull()
     :( "NOT NULL" )
 end
 
+function Default(def)
+    "DEFAULT $(def)"
+end
+
 function Unique()
     :( "UNIQUE" )
 end

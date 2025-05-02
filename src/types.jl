@@ -73,7 +73,9 @@ function mapSqlTypeToJulia(sqlType::String)
     elseif sqlType == "TEXT"
         return :String
     elseif sqlType == "TIMESTAMP"
-        return :DateTime
+        return :(Dates.DateTime)
+    elseif sqlType == "DATE"
+        return :(Dates.Date)
     elseif sqlType == "JSON"
         return :String
     elseif sqlType == "UUID"

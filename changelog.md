@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2]
+### Added
+- Add Default constraint support
+
+### Fixed
+- Update date handling in SQL types
+
 ## [0.3.1]
 
 ### Style

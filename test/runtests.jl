@@ -4,6 +4,7 @@ Pkg.activate("..")
 # ... incluir outros arquivos de teste conforme necessário ...
 
 using Test
+using Dates
 using NebulaORM
 
 # Setup: Obter conexão e dropar as tabelas de teste, se existirem
@@ -26,7 +27,8 @@ Model(
     [
         ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
         ("title", TEXT(), [NotNull()]),
-        ("authorId", INTEGER(), [NotNull()])
+        ("authorId", INTEGER(), [NotNull()]),
+        ("createdAt", TIMESTAMP(), [NotNull(), Default("CURRENT_TIMESTAMP()")])
     ],
     [
         ("authorId", User, "id", :belongsTo)
