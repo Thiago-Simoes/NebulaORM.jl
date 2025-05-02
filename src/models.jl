@@ -1,6 +1,4 @@
 function createTableDefinition(model::Model)
-    println(model)
-    println(model.columns)
     colDefs = String[]
     keyDefs = String[]
     for col in model.columns
@@ -29,92 +27,8 @@ end
 
 
 
-# ---------------------------
-# Macro @Model: Define the model struct and register it
-# ---------------------------
 """
-        macro Model(modelName, colsExpr)
-
-    Generate a model struct definition and register it in the global model registry.
-    
-    Exemplo:
-    @Model User (
-        ("id", NUMBER, PrimaryKey(), AutoIncrement()),
-        ("name", VARCHAR(255), NotNull()),
-        ("email", VARCHAR(255), NotNull(), Unique())
-    )
-"""
-# macro Model(modelName, colsExpr, relationshipsExpr=nothing)
-#     columnsList = colsExpr.args
-#     fieldExprs = []
-#     columnExprs = []
-#     for col in columnsList
-#         colName = string(col.args[1])
-#         colType = string(col.args[2])
-#         constraintsExpr = esc(col.args[3])
-#         push!(columnExprs, :( Column($colName, $colType, $constraintsExpr) ))
-#         juliaType = mapSqlTypeToJulia(colType)
-#         push!(fieldExprs, :( $(Symbol(colName)) :: $juliaType ))
-#     end
-#     local columnsVector = Expr(:vect, columnExprs...)
-#     structDef = quote
-#         Base.@kwdef mutable struct $modelName
-#             $(fieldExprs...)
-#         end
-#     end
-
-#     registration = quote
-#         local modelMeta = Model(string($(esc(modelName))), $columnsVector, $(esc(modelName)))
-#         modelRegistry[nameof($(esc(modelName)))] = modelMeta
-#         local conn = dbConnection()
-#         migrate!(conn, modelMeta)
-#     end
-
-#     relRegistration = if !isnothing(relationshipsExpr)
-#         let relationships = []
-#             reverseBlocks = [] 
-#             for rel in relationshipsExpr.args
-#                 field = rel.args[1]
-#                 target_expr = rel.args[2]
-#                 target_field = rel.args[3]
-#                 rel_type = rel.args[4]
-#                 local rt = rel_type isa QuoteNode ? rel_type.value : rel_type
-#                 local original_sym = rt isa Symbol ? rt : Symbol(string(rt))
-#                 local reverse_sym = (original_sym == :belongsTo ? :hasMany :
-#                                     (original_sym == :hasMany ? :belongsTo : original_sym)) |> QuoteNode
-#                 push!(relationships, 
-#                     :( Relationship(string($field), $(QuoteNode(target_expr)), string($target_field), $rel_type) ))
-#                 push!(reverseBlocks, :( begin
-#                     local revRel = Relationship(string("reverse_" * string($field)), $(QuoteNode(modelName)), string($field), Symbol($reverse_sym))
-#                     local targetModel = resolveModel($(QuoteNode(target_expr)))
-#                     if !any(r -> r.field == string("reverse_" * string($field)) && r.targetModel == $(QuoteNode(modelName)), 
-#                             get(relationshipsRegistry, nameof(targetModel), []))
-#                         if haskey(relationshipsRegistry, nameof(targetModel))
-#                             push!(relationshipsRegistry[nameof(targetModel)], revRel)
-#                         else
-#                             relationshipsRegistry[nameof(targetModel)] = [revRel]
-#                         end
-#                     end
-#                 end ))
-#             end
-#             quote
-#                 relationshipsRegistry[Symbol(nameof($(esc(modelName))))] = [$((relationships)...)];
-#                 $(reverseBlocks...)
-#             end
-#         end
-#     else
-#         quote nothing end
-#     end
-
-#     return quote
-#         $structDef
-#         $registration
-#         $relRegistration
-#     end
-# end
-
-"""
-    defineModel(modelName::Symbol,
+    Model(modelName::Symbol,
                 columnsDef::Vector{<:Tuple{String,String,Vector{<:Any}}};
                 relationshipsDef::Vector{<:Tuple{Symbol,Symbol,Symbol,Symbol}} = [])
 
@@ -140,29 +54,22 @@ function Model(modelName::Symbol,
     end
     @eval Main $struct_expr   # injeta no módulo Main
 
-    # 3) Constrói o vetor de Column
     columns_vec = [ Column(name, sql_type, constraints) 
                     for (name, sql_type, constraints) in columnsDef ]
 
-    # 4) Cria e registra metadata, faz migrate!
     model_meta = Model(string(modelName), columns_vec, getfield(Main, modelName))
-    println(model_meta)
     modelRegistry[Symbol(modelName)] = model_meta
     conn = dbConnection()
     migrate!(conn, model_meta)
 
-    # 5) Se vierem relacionamentos, cadastra igual à lógica da macro
     if !isempty(relationshipsDef)
-        # cada tupla: (campo_local, ModeloAlvo, campo_alvo, tipo_rel)
         rel_objs = Relationship[]
         for (fld, tgt, tgtfld, rtype) in relationshipsDef
             push!(rel_objs,
                  Relationship(string(fld), Symbol(tgt), string(tgtfld), rtype))
-            # cria reverse também...
             rev_type::Symbol = rtype == :belongsTo ? :hasMany :
                        rtype == :hasMany   ? :belongsTo : rtype
             rev_rel = Relationship("reverse_$(fld)", modelName, string(fld), rev_type)
-            # adiciona no relationshipsRegistry do modelo alvo
             arr = get!(relationshipsRegistry, Symbol(tgt), Relationship[])
             push!(arr, rev_rel)
             relationshipsRegistry[Symbol(tgt)] = arr

@@ -16,17 +16,10 @@ Model(
     :User,
     [
         ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
-        ("name", TEXT(), [NotNull()]),
+        ("name", VARCHAR(50), [NotNull()]),
         ("email", TEXT(), [Unique(), NotNull()])
     ]
 )
-
-# @Model User (
-#     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
-#     ("name", @TEXT, [@NotNull()]),
-#     ("email", @TEXT, [@Unique(), @NotNull()])
-# ) [
-# ]
 
 Model(
     :Post,
@@ -40,13 +33,6 @@ Model(
     ]
 )
 
-# @Model Post (
-#     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
-#     ("title", @TEXT, [@NotNull()]),
-#     ("authorId", @INTEGER, [@NotNull()])
-# ) [
-#     ("authorId", User, "id", :belongsTo)
-# ]
 
 @testset verbose = true "NebulaORM" begin
     @testset "NebulaORM Basic CRUD Tests" begin

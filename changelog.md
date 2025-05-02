@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1]
+
+### Style
+- Remove deprecated macros for improved clarity and maintainability.
+- Removed printlns.
+
+
 ## [0.3.0]
 Unlike previous versions, this new release introduces **BREAKING CHANGES**.
 

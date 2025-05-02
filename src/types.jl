@@ -2,7 +2,7 @@
 # Pre-defined SQL type constructors
 # Are macros 
 function VARCHAR(size)
-    return :( "VARCHAR($(size))" )
+    return "VARCHAR($(size))"
 end
 
 function TEXT()
