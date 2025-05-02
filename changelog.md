@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.7]
+Package features are nearly complete for version 1, with release preparations underway.
+
+### Fixed
+- Fixed bug `Evaluation into the closed module `NebulaORM` breaks incremental compilation`
+
 ## [0.2.5]
 Package features are nearly complete for version 1, with release preparations underway.
 
