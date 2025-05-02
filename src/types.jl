@@ -1,39 +1,39 @@
 
 # Pre-defined SQL type constructors
 # Are macros 
-macro VARCHAR(size)
+function VARCHAR(size)
     return :( "VARCHAR($(size))" )
 end
 
-macro TEXT()
+function TEXT()
     return :( "TEXT" )
 end
 
-macro INTEGER()
+function INTEGER()
     return :( "INTEGER" )
 end
 
-macro DOUBLE()
+function DOUBLE()
     return :( "DOUBLE" )
 end
 
-macro FLOAT()
+function FLOAT()
     return :( "FLOAT" )
 end
 
-macro UUID()
+function UUID()
     return :( "VARCHAR(36)" )
 end
 
-macro DATE()
+function DATE()
     return :( "DATE" )
 end
 
-macro TIMESTAMP()
+function TIMESTAMP()
     return :( "TIMESTAMP" )
 end
 
-macro JSON()
+function JSON()
     return :( "JSON" )
 end
 

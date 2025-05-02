@@ -12,20 +12,41 @@ dropTable!(conn, "User")
 dropTable!(conn, "Post")
 
 # Define um modelo de teste com chave primária "id"
-@Model User (
-    ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
-    ("name", @TEXT, [@NotNull()]),
-    ("email", @TEXT, [@Unique(), @NotNull()])
-) [
-]
+Model(
+    :User,
+    [
+        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+        ("name", TEXT(), [NotNull()]),
+        ("email", TEXT(), [Unique(), NotNull()])
+    ]
+)
 
-@Model Post (
-    ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
-    ("title", @TEXT, [@NotNull()]),
-    ("authorId", @INTEGER, [@NotNull()])
-) [
-    ("authorId", User, "id", :belongsTo)
-]
+# @Model User (
+#     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
+#     ("name", @TEXT, [@NotNull()]),
+#     ("email", @TEXT, [@Unique(), @NotNull()])
+# ) [
+# ]
+
+Model(
+    :Post,
+    [
+        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+        ("title", TEXT(), [NotNull()]),
+        ("authorId", INTEGER(), [NotNull()])
+    ],
+    [
+        ("authorId", User, "id", :belongsTo)
+    ]
+)
+
+# @Model Post (
+#     ("id", @INTEGER, [@PrimaryKey(), @AutoIncrement()]),
+#     ("title", @TEXT, [@NotNull()]),
+#     ("authorId", @INTEGER, [@NotNull()])
+# ) [
+#     ("authorId", User, "id", :belongsTo)
+# ]
 
 @testset verbose = true "NebulaORM" begin
     @testset "NebulaORM Basic CRUD Tests" begin
