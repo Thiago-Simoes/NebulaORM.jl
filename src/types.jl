@@ -68,20 +68,20 @@ end
 function mapSqlTypeToJulia(sqlType::String)
     sqlType = uppercase(sqlType)
     if sqlType == "INTEGER"
-        return :Int
+        return Int
     elseif sqlType in ["FLOAT", "DOUBLE"]
-        return :Float64
+        return Float64
     elseif sqlType == "TEXT"
-        return :String
+        return String
     elseif sqlType == "TIMESTAMP"
-        return :(Dates.DateTime)
+        return Dates.DateTime
     elseif sqlType == "DATE"
-        return :(Dates.Date)
+        return Dates.Date
     elseif sqlType == "JSON"
-        return :String
+        return String
     elseif sqlType == "UUID"
-        return :String
+        return String
     else
-        return :Any
+        return Any
     end
 end
