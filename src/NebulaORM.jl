@@ -39,11 +39,11 @@ end
 
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,
-       @Model, generateUuid,
+       Model, generateUuid,
        findMany, findFirst, findFirstOrThrow, findUnique, findUniqueOrThrow,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
-       @VARCHAR, @TEXT, @NUMBER, @DOUBLE, @FLOAT, @UUID, @DATE, @TIMESTAMP, @JSON, @PrimaryKey, @AutoIncrement, @NotNull, @Unique
+       VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, INTEGER, UUID, DATE, TIMESTAMP, JSON, PrimaryKey, AutoIncrement, NotNull, Unique
 
 
 end  # module ORM

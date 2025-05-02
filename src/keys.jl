@@ -1,18 +1,18 @@
 # ---------------------------
 # This file contains the macros for the keys in the database.
 # ---------------------------
-macro PrimaryKey() 
+function PrimaryKey() 
     :( "PRIMARY KEY" )
 end
 
-macro AutoIncrement()
+function AutoIncrement()
     :( "AUTO_INCREMENT" )
 end
 
-macro NotNull()
+function NotNull()
     :( "NOT NULL" )
 end
 
-macro Unique()
+function Unique()
     :( "UNIQUE" )
 end
