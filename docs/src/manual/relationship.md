@@ -15,21 +15,29 @@ In addition, NebulaORM.jl allows you to enrich query results using the `"include
 To define models along with their relationships, use the `@Model` macro. For example:
 
 ```julia
-@Model User (
-    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
-    ("name", "TEXT", [@NotNull()]),
-    ("email", "TEXT", [@Unique(), @NotNull()])
-) [
-    ("posts", Post, "authorId", :hasMany)
-]
+Model(
+    :User,
+    [
+        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+        ("name", TEXT(), [NotNull()]),
+        ("email", TEXT(), [Unique(), NotNull()])
+    ],
+    [
+        ("posts", Post, "authorId", :hasMany)
+    ]
+)
 
-@Model Post (
-    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
-    ("title", "TEXT", [@NotNull()]),
-    ("authorId", "INTEGER", [@NotNull()])
-) [
-    ("authorId", User, "id", :belongsTo)
-]
+Model(
+    :Post,
+    [
+        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+        ("title", TEXT(), [NotNull()]),
+        ("authorId", INTEGER(), [NotNull()])
+    ],
+    [
+        ("User", User, "id", :belongsTo)
+    ]
+)
 ```
 
 In this example:

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0]
+Unlike previous versions, this new release introduces **BREAKING CHANGES**.
+
+### Improved
+- Replaced the use of macros for creating the Model with a function-based approach. This change was implemented to prevent precompilation errors and improve overall reliability. Using functions instead of macros provides better error handling capabilities, clearer debugging information, and avoids issues that may arise from the macro expansion process during precompilation. This enhancement leads to a more robust and maintainable codebase.
+
+
 ## [0.2.7]
 Package features are nearly complete for version 1, with release preparations underway.
 

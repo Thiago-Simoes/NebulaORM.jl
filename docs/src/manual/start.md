@@ -18,18 +18,21 @@ DB_PORT=3306
 ```
 using ORM
 
-@Model User (
-    ("id", "INTEGER", [@PrimaryKey(), @AutoIncrement()]),
-    ("name", "TEXT", [@NotNull()]),
-    ("email", "TEXT", [@Unique(), @NotNull()]),
-    ("cpf", "VARCHAR(11)", [@Unique(), @NotNull()]),
-    ("age", "INTEGER", [])
+Model(
+    :User,
+    [
+        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+        ("name", TEXT(), [NotNull()]),
+        ("email", TEXT(), [Unique(), NotNull()]),
+        ("cpf", VARCHAR(11), [Unique(), NotNull()]),
+        ("age", INTEGER(), [])
+    ]
 )
 ```
 
 #### Inserting data
 The data should be formatted as a Dict.  
-Only @NotNull fields must be provided.  
+Only NotNull fields need be provided.  
 The return can be either an error or a Model Object (a User object in this example).
 ```
 userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
