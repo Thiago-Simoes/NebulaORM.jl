@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.2]
+## [0.3.4]
 ### Fixed
 - Fixed logLevel
 - Removed DotEnv.load!() from init, preventing scope problems
