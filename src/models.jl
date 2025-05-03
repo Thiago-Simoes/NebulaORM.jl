@@ -69,8 +69,7 @@ function Model(modelName::Symbol,
         for (fld, tgt, tgtfld, rtype) in relationshipsDef
             push!(rel_objs,
                  Relationship(string(fld), Symbol(tgt), string(tgtfld), rtype))
-            rev_type::Symbol = rtype == :belongsTo ? :hasMany :
-                       rtype == :hasMany   ? :belongsTo : rtype
+            rev_type::Symbol = ((rtype == :belongsTo) ? :hasMany : (rtype == :hasMany ? :belongsTo : rtype))
             rev_rel = Relationship("reverse_$(fld)", modelName, string(fld), rev_type)
             arr = get!(relationshipsRegistry, Symbol(tgt), Relationship[])
             push!(arr, rev_rel)
