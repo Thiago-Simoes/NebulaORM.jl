@@ -19,7 +19,6 @@ function create_connection()
 end
 
 function init_pool()
-    DotEnv.load!() 
     # Limpa conexões existentes, se houver
     while isready(connection_pool)
         take!(connection_pool)

@@ -5,6 +5,10 @@ Pkg.activate("..")
 
 using Test
 using Dates
+using DotEnv
+
+DotEnv.load!() 
+
 using NebulaORM
 
 # Setup: Obter conexão e dropar as tabelas de teste, se existirem

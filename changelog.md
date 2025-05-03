@@ -1,6 +1,11 @@
 # Changelog
 
 ## [0.3.2]
+### Fixed
+- Fixed logLevel
+- Removed DotEnv.load!() from init, preventing scope problems
+
+## [0.3.2]
 ### Added
 - Add Default constraint support
 

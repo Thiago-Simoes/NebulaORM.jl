@@ -31,7 +31,7 @@ __ORM_INITIALIZED__ = false
     
 # Automatic initialization only if not precompiling
 function __init__()
-    DotEnv.load!() 
+    initLogger()
     global __ORM_INITIALIZED__ = true
 end
 
