@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.5]
+### Fixed
+- Fixed reverse relationships, solving problems with multiple relationships.
+  - Now relationship names are generated with the target and field names.
+
 ## [0.3.4]
 ### Fixed
 - Fixed logLevel
