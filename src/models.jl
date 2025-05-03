@@ -79,7 +79,7 @@ function Model(modelName::Symbol,
         relationshipsRegistry[Symbol(modelName)] = rel_objs
     end
 
-    return nothing
+    return getfield(Main, modelName) # retorna o tipo criado
 end
 
 
