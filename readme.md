@@ -23,7 +23,7 @@ julia> import Pkg; Pkg.add("ORM")
 
 ## Documentation
 
-- [**STABLE**](https://thiago-simoes.github.io/ORM.jl/) &mdash; **documentation of the most recently tagged version.**
+- [**STABLE**](https://thiago-simoes.github.io/OrionORM.jl/build/) &mdash; **documentation of the most recently tagged version.**
 
 ## Project Status
 
