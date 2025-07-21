@@ -35,7 +35,7 @@ Unlike previous versions, this new release introduces **BREAKING CHANGES**.
 Package features are nearly complete for version 1, with release preparations underway.
 
 ### Fixed
-- Fixed bug `Evaluation into the closed module `NebulaORM` breaks incremental compilation`
+- Fixed bug `Evaluation into the closed module `OrionORM` breaks incremental compilation`
 
 ## [0.2.5]
 Package features are nearly complete for version 1, with release preparations underway.
@@ -45,11 +45,11 @@ Package features are nearly complete for version 1, with release preparations un
 
 ### Test Summary
 Test Summary:                   | Pass  Total  Time
-NebulaORM                       |   28     28  8.0s
-  NebulaORM Basic CRUD Tests    |   15     15  7.0s
-  NebulaORM Relationships Tests |    4      4  0.6s
-  NebulaORM Pagination Tests    |    9      9  0.4s
-     Testing NebulaORM tests passed 
+OrionORM                       |   28     28  8.0s
+  OrionORM Basic CRUD Tests    |   15     15  7.0s
+  OrionORM Relationships Tests |    4      4  0.6s
+  OrionORM Pagination Tests    |    9      9  0.4s
+     Testing OrionORM tests passed 
 
 ## [0.2.4]
 ### Improved

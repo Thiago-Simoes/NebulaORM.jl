@@ -9,7 +9,7 @@ using DotEnv
 
 DotEnv.load!() 
 
-using NebulaORM
+using OrionORM
 
 # Setup: Obter conexão e dropar as tabelas de teste, se existirem
 conn = dbConnection()
@@ -40,8 +40,8 @@ Model(
 )
 
 
-@testset verbose = true "NebulaORM" begin
-    @testset "NebulaORM Basic CRUD Tests" begin
+@testset verbose = true "OrionORM" begin
+    @testset "OrionORM Basic CRUD Tests" begin
         # ------------------------------
         # Teste: Criar um registro
         # ------------------------------
@@ -138,7 +138,7 @@ Model(
         @test deleteManyResult === true
     end
 
-    @testset "NebulaORM Relationships Tests" begin
+    @testset "OrionORM Relationships Tests" begin
         userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
         user = create(User, userData)
 
@@ -155,7 +155,7 @@ Model(
 
     end
 
-    @testset "NebulaORM Pagination Tests" begin
+    @testset "OrionORM Pagination Tests" begin
         # Cria registros para paginação
         # Limpa registros anteriores (se necessário)
         deleteMany(User, Dict("where" => "1=1"))

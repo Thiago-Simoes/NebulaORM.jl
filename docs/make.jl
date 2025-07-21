@@ -1,11 +1,11 @@
 import Pkg
 Pkg.activate(".")
-using Documenter, NebulaORM
+using Documenter, OrionORM
 
 push!(LOAD_PATH,"../src/")
 makedocs(
-    sitename="NebulaORM.jl",
-    modules=[NebulaORM],
+    sitename="OrionORM.jl",
+    modules=[OrionORM],
     pages = [
     "Home" => "index.md",
     "Manual" => ["manual/start.md", "manual/relationship.md"],

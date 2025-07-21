@@ -1,5 +1,5 @@
 # API
 
 ```@autodocs
-Modules = [NebulaORM]
+Modules = [OrionORM]
 ```

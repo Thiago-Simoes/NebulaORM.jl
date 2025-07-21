@@ -2,13 +2,13 @@
 
 ## Introduction
 
-**NebulaORM.jl** is an ORM for Julia that simplifies defining models and managing relationships between them. With NebulaORM.jl, you can define relationships such as:
+**OrionORM.jl** is an ORM for Julia that simplifies defining models and managing relationships between them. With OrionORM.jl, you can define relationships such as:
 
 - **hasMany**: A record in one model has many related records in another model.
 - **belongsTo**: A record in one model belongs to a record in another model.
 - **hasOne**: A record in one model has a single related record in another model.
 
-In addition, NebulaORM.jl allows you to enrich query results using the `"include"` key in a query dictionary. This way, you can return related data as part of a `Dict` (for single record queries) or a vector of `Dicts` (for multiple records).
+In addition, OrionORM.jl allows you to enrich query results using the `"include"` key in a query dictionary. This way, you can return related data as part of a `Dict` (for single record queries) or a vector of `Dicts` (for multiple records).
 
 ## Creating Models with Relationships
 
@@ -47,7 +47,7 @@ In this example:
 
 ## Querying with the "include" Parameter
 
-When using the `"include"` parameter in your queries, NebulaORM.jl enriches the result with related records. Depending on the relationship type, the return format will be:
+When using the `"include"` parameter in your queries, OrionORM.jl enriches the result with related records. Depending on the relationship type, the return format will be:
 
 - **hasMany/hasOne**: The result will include, under the key of the related model, either a vector of `Dicts` (for hasMany) or a single `Dict` (for hasOne).
 - **belongsTo**: The result will include a single `Dict` with the parent record's data.
@@ -140,6 +140,6 @@ end
 
 ## Conclusion
 
-With **NebulaORM.jl**, you can easily define models with relationships and perform enriched queries using the `"include"` parameter. This modular approach allows you to build complex queries without manually writing SQL, returning structured results as `Dicts` that simplify data consumption in your application.
+With **OrionORM.jl**, you can easily define models with relationships and perform enriched queries using the `"include"` parameter. This modular approach allows you to build complex queries without manually writing SQL, returning structured results as `Dicts` that simplify data consumption in your application.
 
 Feel free to contribute suggestions or ask questions if you need further details!
