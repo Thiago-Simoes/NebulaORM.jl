@@ -45,7 +45,7 @@ function getConnection()
 
     # Verifica se conexões disponíveis estão abaixo da metade do pool
     if connection_pool.n_avail_items < ceil(Int, POOL_SIZE / 2)
-        @async begin
+        Threads.@spawn :interactive begin
             while length(connection_pool) < POOL_SIZE
                 new_conn = create_connection()
                 put!(connection_pool, new_conn)
