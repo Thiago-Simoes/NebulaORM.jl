@@ -1,7 +1,7 @@
 name = "NebulaORM"
 uuid = "4adc1610-4849-4c0a-9fc4-ca498589e63a"
 authors = ["Thiago Simoes <thiago.simoes@ufrj.br>"]
-version = "0.3.5"
+version = "0.3.6"
 
 [deps]
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"
