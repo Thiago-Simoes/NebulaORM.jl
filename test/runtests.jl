@@ -184,6 +184,52 @@ Model(
         @test page3[1].name == "User 5"
     end
 end
+
+using BenchmarkTools
+using Random
+
+@testset "OrionORM Bulk Operations & Benchmarks" begin
+    # Limpa tabela
+    deleteMany(User, Dict("where" => "1=1"))
+
+    # Prepara dados
+    N = 100
+    user_payloads = [Dict("name" => "BenchUser$(i)",
+                          "email" => "bench$(i)@example.com") for i in 1:N]
+
+    # Benchmark de INSERTs em loop sequencial
+    t_insert = @elapsed for payload in user_payloads
+        create(User, payload)
+    end
+    @info "100 inserts sequenciais em $(t_insert) segundos"
+
+    # Garante que temos dados
+    @test length(findMany(User)) == N
+
+    # Benchmark de SELECTs aleatórios
+    t_select = @elapsed for _ in 1:N
+        idx = rand(1:N)
+        findFirst(User; query=Dict("where" => Dict("email" => "bench$(idx)@example.com")))
+    end
+    @info "100 selects sequenciais em $(t_select) segundos"
+
+    # Verifica integridade de um select
+    sample = findFirst(User; query=Dict("where" => Dict("email" => "bench1@example.com")))
+    @test sample !== nothing && sample.email == "bench1@example.com"
+end
+
+# Benchmark de INSERTs utilizando @benchmark macro com criação de dados para insert
+insert_bench = @benchmark begin
+    userData = Dict("name" => "Benchmark User", "email" => randstring(25) * "@example.com", "cpf" => "12345678900")
+    create(User, userData)
+end
+
+# Benchmark de SELECTs utilizando @benchmark macro
+select_bench = @benchmark begin
+    findFirst(User; query=Dict("where" => Dict("email" => "benchmark@example.com")))
+end
+
+
 # Cleanup: Opcionalmente dropar as tabelas de teste
 # dropTable!(conn, "User")
 # dropTable!(conn, "Post")

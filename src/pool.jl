@@ -55,8 +55,16 @@ function getConnection()
     return conn
 end
 
-function releaseConnection(conn)
-    put!(connection_pool, conn)
+function releaseConnection(conn::MySQL.Connection)
+    if connection_pool.n_avail_items < POOL_SIZE
+        put!(connection_pool, conn)
+    else
+        try
+            DBInterface.close(conn)
+        catch e
+            @warn "Failed to close extra connection" exception=(e,)
+        end
+    end
 end
 
 export init_pool, getConnection, releaseConnection, connection_pool
