@@ -1,4 +1,3 @@
-# Logger initialization based on environment variable "LOG_LEVEL"
 function initLogger()
     lvl = lowercase(get(ENV, "OrionORM_LOG_LEVEL", "error"))
     logLevel = lvl == "error" ? Logging.Error :
@@ -25,6 +24,7 @@ function executeQuery(conn::MySQL.Connection, stmt::MySQL.Statement, args=[]; us
         @error "SQL error occurred $(e)" query=stmt args=args
     end
 end
+
 function executeQuery(conn::MySQL.Connection, stmt::String; useTransaction::Bool=true)
     @info "Executing query" query=stmt transaction=useTransaction
     try
@@ -48,70 +48,71 @@ function dropTable!(conn, tableName::String)
     executeQuery(conn, stmt, [])
 end
 
-
 function findMany(model::DataType; query::Dict = Dict())
     query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
-    local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = executeQuery(conn, stmt, []) |> DataFrame
-    return [ instantiate(resolved, row) for row in eachrow(df) ]
+    try
+        local stmt = DBInterface.prepare(conn, sqlQuery)
+        local df = executeQuery(conn, stmt, []) |> DataFrame
+        return [ instantiate(resolved, row) for row in eachrow(df) ]
+    finally
+        releaseConnection(conn)
+    end
 end
 
-"""
-    advancedFindMany(model::DataType; query::AbstractDict = Dict())
-Realiza uma consulta avançada no modelo base.
-"""
 function advancedFindMany(model::DataType; query::AbstractDict = Dict())
     query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
-    local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = executeQuery(conn, stmt, []) |> DataFrame
-    local results = [ instantiate(resolved, row) for row in eachrow(df) ]
-
-    if haskey(query, "include")
-        local enrichedResults = []
-        for rec in results
-            local result = serialize(rec)
-            for included in query["include"]
-                local includedModel = included
-                if isa(included, String)
-                    includedModel = Base.eval(@__MODULE__, Symbol(included))
-                end
-                local relationships = getRelationships(resolved)
-                for rel in relationships
-                    if resolveModel(rel.targetModel) == includedModel
-                        local related = nothing
-                        if rel.type == :hasMany
-                            related = hasMany(rec, rel.field)
-                            related = [serialize(r) for r in related]
-                        elseif rel.type == :hasOne
-                            related = hasOne(rec, rel.field)
-                            if related !== nothing
-                                related = serialize(related)
+    try
+        local stmt = DBInterface.prepare(conn, sqlQuery)
+        local df = executeQuery(conn, stmt, []) |> DataFrame
+        local results = [ instantiate(resolved, row) for row in eachrow(df) ]
+        if haskey(query, "include")
+            local enrichedResults = []
+            for rec in results
+                local result = serialize(rec)
+                for included in query["include"]
+                    local includedModel = included
+                    if isa(included, String)
+                        includedModel = Base.eval(@__MODULE__, Symbol(included))
+                    end
+                    local relationships = getRelationships(resolved)
+                    for rel in relationships
+                        if resolveModel(rel.targetModel) == includedModel
+                            local related = nothing
+                            if rel.type == :hasMany
+                                related = hasMany(rec, rel.field)
+                                related = [serialize(r) for r in related]
+                            elseif rel.type == :hasOne
+                                related = hasOne(rec, rel.field)
+                                if related !== nothing
+                                    related = serialize(related)
+                                end
+                            elseif rel.type == :belongsTo
+                                related = belongsTo(rec, rel.field)
+                                if related !== nothing
+                                    related = serialize(related)
+                                end
                             end
-                        elseif rel.type == :belongsTo
-                            related = belongsTo(rec, rel.field)
-                            if related !== nothing
-                                related = serialize(related)
-                            end
+                            result[string(includedModel)] = related
+                            break
                         end
-                        result[string(includedModel)] = related
-                        break
                     end
                 end
+                push!(enrichedResults, result)
             end
-            push!(enrichedResults, result)
+            return enrichedResults
+        else
+            return results
         end
-        return enrichedResults
-    else
-        return results
+    finally
+        releaseConnection(conn)
     end
 end
-
 
 function findFirst(model::DataType; query::Dict = Dict())
     query = normalizeQueryDict(query)
@@ -121,59 +122,54 @@ function findFirst(model::DataType; query::Dict = Dict())
     end
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
-    local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = executeQuery(conn, stmt, []) |> DataFrame
-    if isempty(df)
-        return nothing
-    end
-    local record = instantiate(resolved, first(df))
+    try
+        local stmt = DBInterface.prepare(conn, sqlQuery)
+        local df = executeQuery(conn, stmt, []) |> DataFrame
+        if isempty(df)
+            return nothing
+        end
+        local record = instantiate(resolved, first(df))
     
-    # Se "include" estiver presente, enriquece o registro
-    if haskey(query, "include")
-        local result::Dict{String, Any} = Dict(string(resolved) => record)
-
-        # Para cada modelo incluído, busca os registros relacionados
-        for included in query["include"]
-            local includedModel = included
-            # Se o item incluído for string, converte para tipo
-            if isa(included, String)
-                includedModel = Base.eval(@__MODULE__, Symbol(included))
-            end
-            local relationships = getRelationships(resolved)
-            for rel in relationships
-                if string(resolveModel(rel.targetModel)) == string(includedModel)
-                    local related = nothing
-                    if rel.type == :hasMany
-                        related = hasMany(record, rel.field)
-                        # Converte cada registro relacionado para dict
-                        related = [r for r in related]
-                    elseif rel.type == :hasOne
-                        related = hasOne(record, rel.field)
-                        if related !== nothing
-                            related = related
+        if haskey(query, "include")
+            local result::Dict{String, Any} = Dict(string(resolved) => record)
+            for included in query["include"]
+                local includedModel = included
+                if isa(included, String)
+                    includedModel = Base.eval(@__MODULE__, Symbol(included))
+                end
+                local relationships = getRelationships(resolved)
+                for rel in relationships
+                    if string(resolveModel(rel.targetModel)) == string(includedModel)
+                        local related = nothing
+                        if rel.type == :hasMany
+                            related = hasMany(record, rel.field)
+                            related = [r for r in related]
+                        elseif rel.type == :hasOne
+                            related = hasOne(record, rel.field)
+                        elseif rel.type == :belongsTo
+                            related = belongsTo(record, rel.field)
                         end
-                    elseif rel.type == :belongsTo
-                        related = belongsTo(record, rel.field)
-                        if related !== nothing
-                            related = related
-                        end
+                        result[string(includedModel)] = related
+                        break
                     end
-                    result[string(includedModel)] = related
-                    break
                 end
             end
+            return result
+        else
+            return record
         end
-        return result
-    else
-        return record
+    finally
+        releaseConnection(conn)
     end
 end
+
 
 function findFirstOrThrow(model::DataType; query=Dict())
     local rec = findFirst(model; query=query)
-    rec === nothing && error("No record found")
+    isnothing(rec) && error("No record found")
     return rec
 end
+
 
 function findUnique(model::DataType, uniqueField, value; query::AbstractDict = Dict())
     query = normalizeQueryDict(query)
@@ -192,95 +188,111 @@ function findUnique(model::DataType, uniqueField, value; query::AbstractDict = D
     end
     local sqlQuery = buildSqlQuery(resolved, query)
     local conn = dbConnection()
-    local stmt = DBInterface.prepare(conn, sqlQuery)
-    local df = executeQuery(conn, stmt, []) |> DataFrame
-    return isempty(df) ? nothing : instantiate(resolved, first(df))
+    try
+        local stmt = DBInterface.prepare(conn, sqlQuery)
+        local df = executeQuery(conn, stmt, []) |> DataFrame
+        return isempty(df) ? nothing : instantiate(resolved, first(df))
+    finally
+        releaseConnection(conn)
+    end
 end
 
 function findUniqueOrThrow(model::DataType, uniqueField, value)
     local rec = findUnique(model, uniqueField, value)
-    rec === nothing && error("No unique record found")
+    isnothing(rec) && error("No unique record found")
     return rec
 end
 
 function create(model::DataType, data::Dict)
     local resolved = resolveModel(model)
     local conn = dbConnection()
-    local modelFields = Set(String.(fieldnames(resolved)))
-    local filtered = Dict(k => v for (k,v) in data if k in modelFields)
-
-    local meta = modelConfig(resolved)
-    for col in meta.columns
-        if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
-            if !haskey(filtered, col.name)
-                filtered[col.name] = generateUuid()
+    try
+        local meta = modelConfig(resolved)
+        local modelFields = Set(String.(fieldnames(resolved)))
+        local filtered = Dict(k => v for (k,v) in data if k in modelFields)
+    
+        for col in meta.columns
+            if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
+                if !haskey(filtered, col.name)
+                    filtered[col.name] = generateUuid()
+                end
             end
         end
-    end
-
-    local cols = join(keys(filtered), ", ")
-    local placeholders = join(fill("?", length(keys(filtered))), ", ")
-    local vals = collect(values(filtered))
-    local queryStr = "INSERT INTO " * meta.name * " (" * cols * ") VALUES (" * placeholders * ")"
-    local stmt = DBInterface.prepare(conn, queryStr)
-    executeQuery(conn, stmt, vals)
-
-    for col in meta.columns
-        if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
-            local uniqueValue = filtered[col.name]
-            return findFirst(resolved; query = Dict("where" => Dict(col.name => uniqueValue)))
+    
+        local cols = join(keys(filtered), ", ")
+        local placeholders = join(fill("?", length(keys(filtered))), ", ")
+        local vals = collect(values(filtered))
+        local queryStr = "INSERT INTO " * meta.name * " (" * cols * ") VALUES (" * placeholders * ")"
+        local stmt = DBInterface.prepare(conn, queryStr)
+        executeQuery(conn, stmt, vals)
+    
+        for col in meta.columns
+            if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
+                local uniqueValue = filtered[col.name]
+                return findFirst(resolved; query = Dict("where" => Dict(col.name => uniqueValue)))
+            end
         end
-    end
-
-    local id_result = executeQuery(conn, "SELECT LAST_INSERT_ID()"; useTransaction=true) |> DataFrame
-    local id = first(id_result)[1]
-    local pkCol = getPrimaryKeyColumn(resolved)
-    if pkCol !== nothing
-        return findFirst(resolved; query = Dict("where" => Dict(pkCol.name => id)))
-    end
-
-    for col in meta.columns
-        if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
-            local uuid = filtered[col.name]
-            return findFirst(resolved; query = Dict("where" => Dict(col.name => uuid)))
+    
+        local id_result = executeQuery(conn, "SELECT LAST_INSERT_ID()"; useTransaction=true) |> DataFrame
+        local id = first(id_result)[1]
+        local pkCol = getPrimaryKeyColumn(resolved)
+        if pkCol !== nothing
+            return findFirst(resolved; query = Dict("where" => Dict(pkCol.name => id)))
         end
+    
+        for col in meta.columns
+            if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
+                local uuid = filtered[col.name]
+                return findFirst(resolved; query = Dict("where" => Dict(col.name => uuid)))
+            end
+        end
+    
+        error("Não foi possível recuperar o registro inserido.")
+    finally
+        releaseConnection(conn)
     end
-
-    error("Não foi possível recuperar o registro inserido.")
 end
 
 function update(model::DataType, query::AbstractDict, data::Dict)
     query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local conn = dbConnection()
-    local modelFields = Set(String.(fieldnames(resolved)))
-    local filteredData = Dict(k => v for (k,v) in data if k in modelFields)
-    local assignments = join([ "$k = ?" for (k,_) in filteredData ], ", ")
-    local vals = collect(values(filteredData))
+    try
+        local modelFields = Set(String.(fieldnames(resolved)))
+        local filteredData = Dict(k => v for (k,v) in data if k in modelFields)
+        local assignments = join([ "$k = ?" for (k,_) in filteredData ], ", ")
+        local vals = collect(values(filteredData))
     
-    if !haskey(query, "where")
-        error("Query dict must have a 'where' clause for update")
+        if !haskey(query, "where")
+            error("Query dict must have a 'where' clause for update")
+        end
+        local whereClause = ""
+        local wherePart = query["where"]
+        if isa(wherePart, String)
+            whereClause = wherePart
+        elseif isa(wherePart, Dict)
+            whereClause = buildWhereClause(wherePart)
+        else
+            error("Invalid type for 'where' clause")
+        end
+    
+        local updateQuery = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * whereClause
+        local stmt = DBInterface.prepare(conn, updateQuery)
+        executeQuery(conn, stmt, vals)
+        
+        if isa(query["where"], Dict)
+            query["where"] = merge(query["where"], data)
+        end
+        return findFirst(resolved; query=query)
+    finally
+        releaseConnection(conn)
     end
-    local whereClause = ""
-    local wherePart = query["where"]
-    if isa(wherePart, String)
-        whereClause = wherePart
-    elseif isa(wherePart, Dict)
-        whereClause = buildWhereClause(wherePart)
-    else
-        error("Invalid type for 'where' clause")
-    end
-
-    local updateQuery = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * whereClause
-    local stmt = DBInterface.prepare(conn, updateQuery)
-    executeQuery(conn, stmt, vals)
-    return findFirst(resolved; query=query)
 end
 
 function upsert(model::DataType, uniqueField, value, data::Dict)
     local resolved = resolveModel(model)
     local found = findUnique(resolved, uniqueField, value)
-    if found === nothing
+    if isnothing(found)
         return create(resolved, data)
     else
         local queryDict = Dict("where" => Dict(uniqueField => value))
@@ -292,23 +304,27 @@ function delete(model::DataType, query::Dict)
     query = normalizeQueryDict(query)
     local resolved = resolveModel(model)
     local conn = dbConnection()
-    if !haskey(query, "where")
-        error("Query dict must have a 'where' clause for delete")
+    try
+        if !haskey(query, "where")
+            error("Query dict must have a 'where' clause for delete")
+        end
+        local whereClause = ""
+        local wherePart = query["where"]
+        if isa(wherePart, String)
+            whereClause = wherePart
+        elseif isa(wherePart, Dict)
+            whereClause = buildWhereClause(wherePart)
+        else
+            error("Invalid type for 'where' clause")
+        end
+    
+        local deleteQuery = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * whereClause
+        local stmt = DBInterface.prepare(conn, deleteQuery)
+        executeQuery(conn, stmt, [])
+        return true
+    finally
+        releaseConnection(conn)
     end
-    local whereClause = ""
-    local wherePart = query["where"]
-    if isa(wherePart, String)
-        whereClause = wherePart
-    elseif isa(wherePart, Dict)
-        whereClause = buildWhereClause(wherePart)
-    else
-        error("Invalid type for 'where' clause")
-    end
-
-    local deleteQuery = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * whereClause
-    local stmt = DBInterface.prepare(conn, deleteQuery)
-    executeQuery(conn, stmt, [])
-    return true
 end
 
 function createMany(model::DataType, dataList::Vector)
@@ -339,18 +355,21 @@ function updateMany(model::DataType, query, data::Dict)
 
     local resolved = resolveModel(model)
     local conn = dbConnection()
-    local assignments = join([ "$k = ?" for (k, _) in data ], ", ")
-    local vals = collect(values(data))
-    local updateQuery = "UPDATE " * modelConfig(resolved).name *
-                        " SET " * assignments *
-                        " WHERE " * whereClause
-    local stmt = DBInterface.prepare(conn, updateQuery)
-    executeQuery(conn, stmt, vals)
-    # Caso o 'where' seja um Dict, mescle com os dados atualizados.
-    if isa(q["where"], Dict)
-        q["where"] = merge(q["where"], data)
+    try
+        local assignments = join([ "$k = ?" for (k, _) in data ], ", ")
+        local vals = collect(values(data))
+        local updateQuery = "UPDATE " * modelConfig(resolved).name *
+                            " SET " * assignments *
+                            " WHERE " * whereClause
+        local stmt = DBInterface.prepare(conn, updateQuery)
+        executeQuery(conn, stmt, vals)
+        if isa(q["where"], Dict)
+            q["where"] = merge(q["where"], data)
+        end
+        return findMany(resolved; query=q)
+    finally
+        releaseConnection(conn)
     end
-    return findMany(resolved; query=q)
 end
 
 function updateManyAndReturn(model::DataType, query, data::Dict)
@@ -377,14 +396,18 @@ function deleteMany(model::DataType, query=Dict())
 
     local resolved = resolveModel(model)
     local conn = dbConnection()
-    local deleteQuery = "DELETE FROM " * modelConfig(resolved).name *
-                        " WHERE " * whereClause
-    local stmt = DBInterface.prepare(conn, deleteQuery)
-    executeQuery(conn, stmt, [])
-    return true
+    try
+        local deleteQuery = "DELETE FROM " * modelConfig(resolved).name *
+                            " WHERE " * whereClause
+        local stmt = DBInterface.prepare(conn, deleteQuery)
+        executeQuery(conn, stmt, [])
+        return true
+    finally
+        releaseConnection(conn)
+    end
 end
 
-# Atualiza registro via método de instância usando query dict (sem aspas extras)
+# Métodos de instância já utilizam as funções acima
 function update(modelInstance)
     local modelType = typeof(modelInstance)
     local pkCol = getPrimaryKeyColumn(modelType)
@@ -399,7 +422,6 @@ function update(modelInstance)
     return update(modelType, query, data)
 end
 
-# Deleta registro via método de instância usando query dict
 function delete(modelInstance)
     local modelType = typeof(modelInstance)
     local pkCol = getPrimaryKeyColumn(modelType)

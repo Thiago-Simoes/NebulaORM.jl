@@ -12,3 +12,9 @@ function dbConnection()
     end
     return Pool.getConnection()
 end
+
+function releaseConnection(conn)
+    Pool.releaseConnection(conn)
+end
+
+export releaseConnection, dbConnection

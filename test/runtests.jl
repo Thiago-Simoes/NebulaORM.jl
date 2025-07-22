@@ -15,6 +15,7 @@ using OrionORM
 conn = dbConnection()
 dropTable!(conn, "User")
 dropTable!(conn, "Post")
+releaseConnection(conn)
 
 # Define um modelo de teste com chave primária "id"
 Model(
