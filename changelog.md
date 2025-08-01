@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.5.0] - 2025-08-01
+### Added
+
+* **QueryBuilder v2** with full support for prepared statements, nested filters (`AND`, `OR`, `not`), array operations (`in`, `notIn`), and pattern matching (`contains`, `startsWith`, `endsWith`).
+* **LEFT JOIN** semantics for `include` in `findMany`/`findFirst`, ensuring parents without children are still returned.
+* **Bulk‐insert helpers**:
+
+  * `buildBatchInsertQuery(model, records)`
+  * `createMany(model, records; chunkSize, transaction)`
+  * `createManyAndReturn(model, records)`
+  * `updateManyAndReturn(model, query, data)`
+* **`Base.filter` alias** for `findMany`.
+* Extensive **negative and edge‐case tests** covering error handling, QueryBuilder operators, include‐empty children, default timestamps, transaction rollback, and `findUnique` without throw.
+
+### Changed
+
+* **Connection pool** refactored: connection validation, auto-reconnect, safe release, and explicit support for long-lived transactions.
+* **`executeQuery` unified API**:
+
+  * **Low-level**: `executeQuery(conn, sql, params; useTransaction)` without closing `conn`.
+  * **High-level**: `executeQuery(sql, params; useTransaction)` opens/closes `conn`.
+  * Auto-detects **SELECT** → returns `DataFrame`, **INSERT/UPDATE/DELETE** → returns `Int` (rows affected), **DDL** → returns `Bool`.
+  * Always closes prepared statements to eliminate “commands out of sync.”
+* **`findMany` / `findFirst`**:
+
+  * Support for `include=[Model]` returning `Dict{String,Any}` with both parent and child arrays.
+  * Internally uses a single LEFT JOIN and post-processes `eachrow(df)` into model instances.
+* **`create(model, data)`** now safely retrieves `LAST_INSERT_ID()` on the same connection, eliminating cross-process ID mixups.
+* **`updateMany`** now returns only the records actually updated by primary key lookup, not by re-querying the original filter.
+* **QueryBuilder JOINs** default to `LEFT JOIN` when `include` is used.
+
+### Fixed
+
+- **Resource leaks** and “commands out of sync”:
+  - Prepared statements are always closed in a `finally` block.
+  - Connections are released promptly after use.
+- **Transaction rollback test** now correctly propagates exceptions from inside `DBInterface.transaction`.
+* **`instantiate` errors** resolved by always using a `DataFrameRow` (`df[1, :]`) in `findFirst` instead of raw vectors.
+
+### Breaking Changes
+- **`findMany(...; include=[...])`** now returns `Vector{Dict{String,Any}}` (with `"Model"` and `"IncludeModel"` fields) instead of `Vector{Model}`.
+- Public `QueryBuilder` functions (`buildSqlQuery`, etc.) have been replaced by the new prepared-statement builders (`buildSelectQuery`, `buildInsertQuery`, `buildUpdateQuery`, `buildDeleteQuery`).
+
+
 ## [0.3.5]
 ### Fixed
 - Fixed reverse relationships, solving problems with multiple relationships.

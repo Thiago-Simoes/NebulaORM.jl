@@ -39,7 +39,7 @@ end
 
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,
-       Model, generateUuid,
+       Model, generateUuid, executeQuery, releaseConnection,
        findMany, findFirst, findFirstOrThrow, findUnique, findUniqueOrThrow,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,

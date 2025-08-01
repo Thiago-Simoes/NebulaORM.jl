@@ -1,4 +1,4 @@
-# ORM.jl
+# OrionORM.jl
 *Easy ORM for Julia.*
 
 # Package Features

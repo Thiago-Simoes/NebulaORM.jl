@@ -1,7 +1,11 @@
 using Dates
 
 # Pre-defined SQL type constructors
-# Are macros 
+ 
+function CHAR(size::Integer)::String
+    return "CHAR($size)"
+end
+
 function VARCHAR(size)
     return "VARCHAR($(size))"
 end
@@ -20,6 +24,30 @@ end
 
 function FLOAT()
     return :( "FLOAT" )
+end
+
+function DECIMAL(precision::Integer, scale::Integer)::String
+    return "DECIMAL($precision,$scale)"
+end
+
+function BOOLEAN()
+    return :( "BOOLEAN" )
+end
+
+function TINYINT(size::Integer)::String
+    return "TINYINT($size)"
+end
+
+function ENUM(values::Vector{<:AbstractString})::String
+    let quoted = join(["'$(v)'" for v in values], ",")
+        return "ENUM($quoted)"
+    end
+end
+
+function SET(values::Vector{<:AbstractString})::String
+    let quoted = join(["'$(v)'" for v in values], ",")
+        return "SET($quoted)"
+    end
 end
 
 function UUID()
