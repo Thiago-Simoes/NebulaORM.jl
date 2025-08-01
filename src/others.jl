@@ -1,7 +1,9 @@
-function getLastInsertId(conn)
-    result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID() as id")
-    row = first(result) |> DataFrame
-    return row[1, :id]
+function getLastInsertId()
+    conn = dbConnection()
+    result = DBInterface.execute(conn, "SELECT LAST_INSERT_ID() as id") |> DataFrame
+    row = first(result)
+    releaseConnection(conn)
+    return row.id |> Int
 end
 
 

@@ -39,7 +39,8 @@ executando a migração e cadastrando relacionamentos.
 """
 function Model(modelName::Symbol,
                      columnsDef::Vector,
-                     relationshipsDef::Vector = [])
+                     relationshipsDef::Vector = [],
+                     context= @__MODULE__)
 
     # 1) Monta os campos do struct com tipos Julia
     field_exprs = Vector{Expr}()
@@ -132,12 +133,12 @@ function convertRowToDict(row, model::DataType)
     return d
 end
 
-function instantiate(model::DataType, record)
+function instantiate(model::DataType, record::Union{DataFrame, DataFrameRow})
     meta = modelConfig(model)
     args = []
     for (i, col) in enumerate(meta.columns)
         value = record[i]
-        if value === missing
+        if ismissing(value)
             if col.type == "INTEGER"
                 push!(args, 0)
             elseif col.type in ["FLOAT", "DOUBLE"]

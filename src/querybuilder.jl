@@ -1,42 +1,131 @@
 # ---------------------------
 # Query Builder Inspired by Prisma.io
 # ---------------------------
-# Função auxiliar para construir a cláusula WHERE a partir de um Dict
-function buildWhereClause(whereDict::Dict)
-    conditions = String[]
-    for (key, val) in whereDict
-        if key == "endswith"
-            for (col, subStr) in val
-                push!(conditions, "$col LIKE '%" * string(subStr) * "'")
-            end
-        elseif key == "startswith"
-            for (col, subStr) in val
-                push!(conditions, "$col LIKE '" * string(subStr) * "%'")
-            end
-        elseif key == "contains"
-            for (col, subStr) in val
-                push!(conditions, "$col LIKE '%" * string(subStr) * "%'")
-            end
-        elseif key == "not"
-            innerCondition = buildWhereClause(val)
-            push!(conditions, "NOT (" * innerCondition * ")")
-        elseif key == "in"
-            for (col, arr) in val
-                valuesStr = join([isa(x, String) ? "'$x'" : string(x) for x in arr], ", ")
-                push!(conditions, "$col IN (" * valuesStr * ")")
-            end
+# ---------------------------
+# Query Builder – versão 2 (prepared)
+# ---------------------------
+
+# === WHERE ===============================================================
+
+"""
+    _build_where(where)::NamedTuple{(:clause,:params)}
+
+Recebe qualquer Dict compatível com a sintaxe Prisma e devolve
+`clause::String` (com placeholders `?`) e `params::Vector` na ordem certa.
+"""
+function _build_where(whereDef)::NamedTuple{(:clause,:params)}
+    conds  = String[]
+    params = Any[]
+
+    for (k,v) in whereDef
+        ks = string(k)
+
+        if ks == "AND" || ks == "OR"
+            sub = [_build_where(x) for x in v]
+            joined = join(["(" * s.clause * ")" for s in sub], " $ks ")
+            append!(params, reduce(vcat, [s.params for s in sub], init = Any[]))
+            push!(conds, joined)
+
+        elseif ks == "not"
+            sub = _build_where(v)
+            push!(conds, "NOT (" * sub.clause * ")")
+            append!(params, sub.params)
+
+        elseif ks == "isNull"
+            # v deve ser algo como ["colName"]
+            push!(conds, "$(first(v)) IS NULL")
+
         else
-            if isa(val, String)
-                push!(conditions, "$key = '$val'")
+            # ou é operador de array no nível de coluna
+            if v isa Dict
+                for (op,val) in v
+                    opos = string(op)
+
+                    if opos == "gt"
+                        push!(conds, "`$ks` > ?");   push!(params, val)
+                    elseif opos == "gte"
+                        push!(conds, "`$ks` >= ?");  push!(params, val)
+                    elseif opos == "lt"
+                        push!(conds, "`$ks` < ?");   push!(params, val)
+                    elseif opos == "lte"
+                        push!(conds, "`$ks` <= ?");  push!(params, val)
+                    elseif opos == "eq"
+                        push!(conds, "`$ks` = ?");   push!(params, val)
+
+                    elseif opos == "contains"
+                        push!(conds, "`$ks` LIKE ?");  push!(params, "%$(val)%")
+                    elseif opos == "startsWith"
+                        push!(conds, "`$ks` LIKE ?");  push!(params, "$(val)%")
+                    elseif opos == "endsWith"
+                        push!(conds, "`$ks` LIKE ?");  push!(params, "%$(val)")
+
+                    elseif opos == "in"
+                        ph = join(fill("?", length(val)), ",")
+                        push!(conds, "`$ks` IN ($ph)"); append!(params, val)
+                    elseif opos == "notIn"
+                        ph = join(fill("?", length(val)), ",")
+                        push!(conds, "`$ks` NOT IN ($ph)"); append!(params, val)
+
+                    else
+                        error("Operador desconhecido $opos")
+                    end
+                end
+
             else
-                push!(conditions, "$key = " * string(val))
+                # caso simples campo = valor
+                push!(conds, "$ks = ?")
+                push!(params, v)
             end
         end
     end
-    return join(conditions, " AND ")
+
+    return (clause = join(conds, " AND "), params = params)
 end
 
-# Função auxiliar para construir cláusula JOIN com base em um relacionamento
+
+# === JOIN ================================================================
+
+function _build_join(root::DataType, include)::NamedTuple
+    joins = String[]
+    seen  = Set{Symbol}()
+    for inc in include
+        rels = getRelationships(root)
+        wanted = Symbol(isa(inc, String) ? inc : nameof(inc))
+        rel = findfirst(r->resolveModel(r.targetModel) === resolveModel(wanted), rels)
+        isnothing(rel) && error("No relationship to $(wanted) from $(root)")
+        _, incModel, cond = buildJoinClause(root, rels[rel])
+        incTable = modelConfig(incModel).name
+        push!(joins, " LEFT JOIN $incTable ON $cond ")
+        push!(seen, wanted)
+    end
+    return (sql = join(joins, ""), seen = seen)
+end
+
+# === SELECT ==============================================================
+function _build_select(baseTable::AbstractString, query)::String
+    if haskey(query,"select")
+        return join(query["select"],", ")
+    elseif haskey(query,"include")
+        return "$baseTable.*"
+    else
+        return "*"
+    end
+end
+
+# === ORDER ===============================================================
+function _build_order(order)::AbstractString
+    if order isa String
+        return order                       # já veio validado
+    elseif order isa Dict
+        (col,dir) = first(order)
+        dir = uppercase(string(dir)) in ("ASC","DESC") ? dir : "ASC"
+        return "$col $dir"
+    else
+        error("orderBy deve ser String ou Dict")
+    end
+end
+
+# === MAIN BUILDER ========================================================
 function buildJoinClause(rootModel::DataType, rel::Relationship)
     local rootTable = modelConfig(rootModel).name
     local includedModel = resolveModel(rel.targetModel)
@@ -66,80 +155,103 @@ function buildJoinClause(rootModel::DataType, rel::Relationship)
     end
 end
 
-# Função principal para queries dinâmicas usando sintaxe inspirada no Prisma.io.
-# Suporta chaves: "where", "include", "orderBy", "limit", "offset", "select"
-function buildSqlQuery(model::DataType, queryDict::Dict)
-    local baseTable = modelConfig(model).name
 
-    # SELECT clause: se o usuário definiu "select", usa-o;
-    # senão, se "include" está presente, retorna apenas as colunas da tabela base.
-    local selectClause = ""
-    if haskey(queryDict, "select")
-        local selectFields = queryDict["select"]
-        if isa(selectFields, Vector)
-            selectClause = join(selectFields, ", ")
-        else
-            error("select must be a vector of fields")
-        end
-    else
-        if haskey(queryDict, "include")
-            selectClause = baseTable * ".*"
-        else
-            selectClause = "*"
-        end
+"""
+    buildSqlQuery(model::DataType, query::Dict)
+
+Devolve `(sql,params)` prontos para `DBInterface.prepare/execute`.
+"""
+function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:params)}
+    baseTable = modelConfig(model).name
+    select    = _build_select(baseTable, query)
+    sql       = "SELECT $select FROM $baseTable"
+    params    = Any[]
+
+    # JOIN / INCLUDE
+    if haskey(query,"include")
+        j = _build_join(model, query["include"])
+        sql *= j.sql
     end
 
-    local query = "SELECT " * selectClause * " FROM " * baseTable
-
-
-    # WHERE clause
-    if haskey(queryDict, "where")
-        local whereClause = buildWhereClause(queryDict["where"])
-        if whereClause != ""
-            query *= " WHERE " * whereClause
-        end
+    # WHERE
+    if haskey(query,"where")
+        w = _build_where(query["where"])
+        sql    *= " WHERE " * w.clause
+        append!(params, w.params)
     end
 
-    # ORDER BY
-    if haskey(queryDict, "orderBy")
-        query *= " ORDER BY " * string(queryDict["orderBy"])
-    end
+    # ORDER / LIMIT / OFFSET
+    if haskey(query,"orderBy"); sql *= " ORDER BY " * _build_order(query["orderBy"]) end
+    if haskey(query,"limit");   sql *= " LIMIT ?" ; push!(params, query["limit"])    end
+    if haskey(query,"offset");  sql *= " OFFSET ?" ; push!(params, query["offset"])  end
 
-    # LIMIT e OFFSET
-    if haskey(queryDict, "limit")
-        query *= " LIMIT " * string(queryDict["limit"])
-        if haskey(queryDict, "offset")
-            query *= " OFFSET " * string(queryDict["offset"])
-        end
-    end
-
-    return query
+    return (sql = sql, params = params)
 end
 
 
-# Função auxiliar para normalizar query dict para Dict{String,Any}
-function normalizeQueryDict(query::AbstractDict)
-    normalized = Dict{String,Any}()
-    for (k, v) in query
-        normalized[string(k)] = v
+"""
+    buildInsertQuery(model::DataType, data::Dict{String,Any})
+
+Gera:
+  sql    = "INSERT INTO table (col1,col2,…) VALUES (?,?,…)"
+  params = [val1, val2, …]
+"""
+function buildInsertQuery(model::DataType, data::Dict{<:AbstractString,<:Any})
+    meta   = modelConfig(model)
+    cols   = String[]
+    phs    = String[]
+    params = Any[]
+    for (k,v) in data
+        push!(cols, "`$k`")
+        push!(phs, "?")
+        push!(params, v)
     end
-    return normalized
+    tbl    = meta.name
+    sql    = "INSERT INTO $tbl (" * join(cols, ",") * ") VALUES (" * join(phs, ",") * ")"
+    return (sql=sql, params=params)
 end
 
-using Dates
 
-# Função interna para escapar strings (sem aspas externas)
-function sql_escape_raw(value::AbstractString)::String
-    clean = replace(value, "'" => "''")                          # Escapa aspas simples
-    clean = replace(clean, r"(--|#|;)" => "")                     # Remove comentários e separadores
-    clean = replace(clean, r"[\x00-\x1F\x7F]" => "")              # Remove caracteres de controle ASCII
-    clean = String(normalize(clean, stripmark=true, compat=true))  # Normaliza Unicode
-    return clean
+"""
+    buildUpdateQuery(model::DataType, data::Dict, where::Dict)
+
+Gera:
+  sql    = "UPDATE table SET col1 = ?, col2 = ? WHERE (…)"
+  params = [val1, val2, …, [where-params…]]
+"""
+function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, query::Dict{<:AbstractString,<:Any})
+    meta      = modelConfig(model)
+    assigns   = String[]
+    params    = Any[]
+    for (k,v) in data
+        push!(assigns, "`$k` = ?")
+        push!(params, v)
+    end
+    # reaproveita o _build_where para o WHERE
+    w = _build_where(query)
+    tbl   = meta.name
+    sql   = "UPDATE $tbl SET " * join(assigns, ", ") * " WHERE " * w.clause
+    append!(params, w.params)
+    return (sql=sql, params=params)
 end
 
-# Overloads para sql_escape
-sql_escape(x::Nothing) = "NULL"
-sql_escape(x::Bool) = x ? "TRUE" : "FALSE"
-sql_escape(x::Number) = string(x)
-sql_escape(x::Date) = "'$(Dates.format(x, "yyyy-mm-dd"))'"
-sql_escape(x::AbstractString) = "'" * sql_escape_raw(x) * "'"
+
+"""
+    buildDeleteQuery(model::DataType, where::Dict)
+
+Gera:
+  sql    = "DELETE FROM table WHERE (…)"; params = [where-params…]
+"""
+function buildDeleteQuery(model::DataType, query::Dict{<:AbstractString,<:Any})
+    meta   = modelConfig(model)
+    w      = _build_where(query)
+    sql    = "DELETE FROM " * meta.name * " WHERE " * w.clause
+    return (sql=sql, params=w.params)
+end
+
+
+
+# Mantém compatibilidade com chamadas antigas (sem Dict → retorno igual)
+normalizeQuery(q::AbstractDict) = Dict{String,Any}(string(k)=>v for (k,v) in q)
+normalizeQuery(q::NamedTuple) = Dict{String,Any}(string(k)=>v for (k,v) in pairs(q))
+

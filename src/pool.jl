@@ -41,7 +41,7 @@ function validate_connection(conn)
 end
 
 function getConnection()
-    local conn = take!(connection_pool)
+    local conn = take!(connection_pool) |> validate_connection
 
     # Verifica se conexões disponíveis estão abaixo da metade do pool
     if connection_pool.n_avail_items < ceil(Int, POOL_SIZE / 2)

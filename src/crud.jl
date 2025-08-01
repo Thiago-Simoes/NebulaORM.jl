@@ -7,143 +7,144 @@ function initLogger()
     @info "Logger configured" level=logLevel
 end
 
-# Updated executeQuery function using logging
-function executeQuery(conn::MySQL.Connection, stmt::MySQL.Statement, args=[]; useTransaction::Bool=true)
-    @info "Executing query" query=stmt args=args transaction=useTransaction
+"""
+    executeQuery(conn::DBInterface.Connection, stmt::String, params::Vector{Any}=Any[]; useTransaction::Bool=true)
+
+Prepare and execute a SQL statement on the given connection, returning the result as a `DataFrame`
+for queries that return rows, or the raw result (e.g., number of affected rows) otherwise.
+
+# Arguments
+- `conn::DBInterface.Connection`: The database connection to use.
+- `stmt::String`: The SQL query string to prepare.
+- `params::Vector{Any}`: A vector of parameters to bind to the prepared statement (default: `Any[]`).
+- `useTransaction::Bool`: Whether to run the statement inside a new transaction (default: `true`).
+  When `false`, the statement is executed without starting a transaction—useful if you are already
+  inside `DBInterface.transaction`.
+
+# Returns
+- A `DataFrame` if the underlying result is tabular.
+- Otherwise, returns the raw result from `DBInterface.execute`, such as the number of affected rows.
+
+# Throws
+- Rethrows any exception raised during statement preparation or execution.
+
+# Returns
+
+- A `DataFrame` if the result is tabular.  
+- Otherwise, the raw result (e.g. number of affected rows).
+"""
+function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params::Vector{<:Any}=Any[]; useTransaction::Bool=true)
+    stmt = DBInterface.prepare(conn, sql)
     try
-        if useTransaction
-            ret = DataFrame()
-            DBInterface.transaction(conn) do
-                ret = DBInterface.execute(stmt, args)
-            end
-            return ret
+        is_sel = startswith(uppercase(strip(sql)), "SELECT")
+        result = if is_sel
+            DBInterface.execute(stmt, params)
         else
-            return DBInterface.execute(stmt, args)
+            if useTransaction
+                DBInterface.transaction(conn) do
+                    DBInterface.execute(stmt, params)
+                end
+            else
+                DBInterface.execute(stmt, params)
+            end
         end
-    catch e
-        @error "SQL error occurred $(e)" query=stmt args=args
+        if is_sel
+            return DataFrame(result)
+        elseif startswith(uppercase(strip(sql)), "INSERT") || startswith(uppercase(strip(sql)), "UPDATE") || startswith(uppercase(strip(sql)), "DELETE")
+            isa(result, Bool) && return result  # se for um booleano, retorna ele
+            return result.rows_affected
+        else
+            return Bool(result)
+        end
+    finally
+        try DBInterface.close!(stmt) catch _ end
     end
 end
 
-function executeQuery(conn::MySQL.Connection, stmt::String; useTransaction::Bool=true)
-    @info "Executing query" query=stmt transaction=useTransaction
+function executeQuery(sql::AbstractString, params::Vector{<:Any}=Any[]; useTransaction::Bool=true)
+    conn = dbConnection()
     try
-        if useTransaction
-            ret = DataFrame()
-            DBInterface.transaction(conn) do
-                ret = DBInterface.execute(conn, stmt)
-            end
-            return ret
-        else
-            return DBInterface.execute(conn, stmt)
-        end
-    catch e
-        @error "SQL error occurred $(e)" query=stmt
-    end
-end
-
-function dropTable!(conn, tableName::String)
-    query = "DROP TABLE IF EXISTS " * tableName
-    stmt = DBInterface.prepare(conn, query)
-    executeQuery(conn, stmt, [])
-end
-
-function findMany(model::DataType; query::Dict = Dict())
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    local sqlQuery = buildSqlQuery(resolved, query)
-    local conn = dbConnection()
-    try
-        local stmt = DBInterface.prepare(conn, sqlQuery)
-        local df = executeQuery(conn, stmt, []) |> DataFrame
-        return [ instantiate(resolved, row) for row in eachrow(df) ]
+        return executeQuery(conn, sql, params; useTransaction=useTransaction)
     finally
         releaseConnection(conn)
     end
 end
 
-function advancedFindMany(model::DataType; query::AbstractDict = Dict())
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    local sqlQuery = buildSqlQuery(resolved, query)
-    local conn = dbConnection()
+
+function dropTable!(conn::DBInterface.Connection, tableName::String)
     try
-        local stmt = DBInterface.prepare(conn, sqlQuery)
-        local df = executeQuery(conn, stmt, []) |> DataFrame
-        local results = [ instantiate(resolved, row) for row in eachrow(df) ]
-        if haskey(query, "include")
-            local enrichedResults = []
-            for rec in results
-                local result = serialize(rec)
-                for included in query["include"]
-                    local includedModel = included
-                    if isa(included, String)
-                        includedModel = Base.eval(@__MODULE__, Symbol(included))
-                    end
-                    local relationships = getRelationships(resolved)
-                    for rel in relationships
-                        if resolveModel(rel.targetModel) == includedModel
-                            local related = nothing
-                            if rel.type == :hasMany
-                                related = hasMany(rec, rel.field)
-                                related = [serialize(r) for r in related]
-                            elseif rel.type == :hasOne
-                                related = hasOne(rec, rel.field)
-                                if related !== nothing
-                                    related = serialize(related)
-                                end
-                            elseif rel.type == :belongsTo
-                                related = belongsTo(rec, rel.field)
-                                if related !== nothing
-                                    related = serialize(related)
-                                end
-                            end
-                            result[string(includedModel)] = related
+        sql = "DROP TABLE IF EXISTS `$tableName`"
+        DBInterface.execute(conn, sql)
+        return nothing
+    catch e
+        @error "Failed to drop table" exception=(e,) table=tableName
+        rethrow(e)
+    end
+end
+
+function findMany(model::DataType; query::AbstractDict=Dict())
+    qdict    = normalizeQuery(query)
+    resolved = resolveModel(model)
+    conn     = dbConnection()
+    try
+        b    = buildSelectQuery(resolved, qdict)
+        df   = executeQuery(conn, b.sql, b.params)
+        recs = [instantiate(resolved, row) for row in eachrow(df)]
+        if haskey(qdict, "include")
+            out = Vector{Dict{String,Any}}()
+            for rec in recs
+                m = Dict{String,Any}(string(resolved)=>rec)
+                for inc in qdict["include"]
+                    incModel = isa(inc,String) ? Base.eval(@__MODULE__, Symbol(inc)) : inc
+                    for rel in getRelationships(resolved)
+                        if resolveModel(rel.targetModel) === incModel
+                            val = rel.type == :hasMany    ? hasMany(rec, rel.field)    :
+                                  rel.type == :hasOne    ? hasOne(rec, rel.field)     :
+                                  rel.type == :belongsTo ? belongsTo(rec, rel.field)  :
+                                                           nothing
+                            m[string(incModel)] = val
                             break
                         end
                     end
                 end
-                push!(enrichedResults, result)
+                push!(out, m)
             end
-            return enrichedResults
-        else
-            return results
+            return out
         end
+        return recs
     finally
         releaseConnection(conn)
     end
 end
 
-function findFirst(model::DataType; query::Dict = Dict())
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    if !haskey(query, "limit")
-        query["limit"] = 1
+function findFirst(model::DataType; query::AbstractDict = Dict())
+    qdict    = normalizeQuery(query)
+    resolved = resolveModel(model)
+
+    if !haskey(qdict, "limit")
+        qdict["limit"] = 1
     end
-    local sqlQuery = buildSqlQuery(resolved, query)
-    local conn = dbConnection()
+
     try
-        local stmt = DBInterface.prepare(conn, sqlQuery)
-        local df = executeQuery(conn, stmt, []) |> DataFrame
-        if isempty(df)
-            return nothing
-        end
-        local record = instantiate(resolved, first(df))
-    
-        if haskey(query, "include")
-            local result::Dict{String, Any} = Dict(string(resolved) => record)
-            for included in query["include"]
-                local includedModel = included
-                if isa(included, String)
-                    includedModel = Base.eval(@__MODULE__, Symbol(included))
-                end
-                local relationships = getRelationships(resolved)
-                for rel in relationships
-                    if string(resolveModel(rel.targetModel)) == string(includedModel)
-                        local related = nothing
+        b = buildSelectQuery(resolved, qdict)    # NamedTuple(sql, params)
+        df = executeQuery(b.sql, b.params)   # já retorna DataFrame
+
+        isempty(df) && return nothing
+        
+        record = instantiate(resolved, df[1, :])
+
+        if haskey(qdict, "include")
+            result = Dict{String,Any}()
+            result[string(resolved)] = record
+
+            for included in qdict["include"]
+                includedModel = isa(included, String) ? Base.eval(@__MODULE__, Symbol(included)) : included
+
+                for rel in getRelationships(resolved)
+                    if resolveModel(rel.targetModel) === includedModel
+                        related = nothing
                         if rel.type == :hasMany
                             related = hasMany(record, rel.field)
-                            related = [r for r in related]
                         elseif rel.type == :hasOne
                             related = hasOne(record, rel.field)
                         elseif rel.type == :belongsTo
@@ -154,284 +155,307 @@ function findFirst(model::DataType; query::Dict = Dict())
                     end
                 end
             end
+
             return result
-        else
-            return record
         end
-    finally
-        releaseConnection(conn)
+        return record
+    catch e
+        rethrow(e)
     end
 end
 
 
-function findFirstOrThrow(model::DataType; query=Dict())
-    local rec = findFirst(model; query=query)
-    isnothing(rec) && error("No record found")
-    return rec
-end
+"""
+    findUnique(model::DataType, uniqueField, value; query=Dict())
 
+Finds a single record by a unique field. Returns an instance of the model if found,
+or `nothing` if no matching record exists.
+"""
+function findUnique(model::DataType, uniqueField, value; query::AbstractDict=Dict())
+    qdict    = normalizeQuery(query)
+    resolved = resolveModel(model)
 
-function findUnique(model::DataType, uniqueField, value; query::AbstractDict = Dict())
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    if haskey(query, "where")
-        if query["where"] isa Dict
-            query["where"][uniqueField] = value
+    if haskey(qdict, "where")
+        if qdict["where"] isa Dict
+            qdict["where"][uniqueField] = value
         else
             error("The 'where' field must be a Dict")
         end
     else
-        query["where"] = Dict(uniqueField => value)
+        qdict["where"] = Dict(uniqueField => value)
     end
-    if !haskey(query, "limit")
-        query["limit"] = 1
+
+    if !haskey(qdict, "limit")
+        qdict["limit"] = 1
     end
-    local sqlQuery = buildSqlQuery(resolved, query)
-    local conn = dbConnection()
+
     try
-        local stmt = DBInterface.prepare(conn, sqlQuery)
-        local df = executeQuery(conn, stmt, []) |> DataFrame
-        return isempty(df) ? nothing : instantiate(resolved, first(df))
+        b    = buildSelectQuery(resolved, qdict)
+        df   = executeQuery(b.sql, b.params)
+        isempty(df) && return nothing
+        return instantiate(resolved, first(df))
+    catch e
+        rethrow(e)
+    end
+end
+
+
+"""
+    create(model::DataType, data::Dict{String,Any})
+
+Inserts a new record for `model`, auto-generating UUIDs when needed,
+and returns the created instance.
+"""
+function create(model::DataType, data::Dict{<:AbstractString,<:Any})
+    resolved = resolveModel(model)
+    meta     = modelConfig(resolved)
+    allowed  = Set(String.(fieldnames(resolved)))
+    filtered = Dict(k=>v for (k,v) in data if k in allowed)
+
+    # gera UUID automático
+    for col in meta.columns
+        if occursin("VARCHAR(36)" ,col.type) &&
+           "UUID" in uppercase(join(col.constraints," ")) &&
+           !haskey(filtered,col.name)
+            filtered[col.name] = generateUuid()
+        end
+    end
+
+    conn = dbConnection()
+    inserted_id = nothing
+    try
+        # 1) INSERT dentro de TRANSACTION implícito
+        b = buildInsertQuery(resolved, filtered)
+        executeQuery(conn, b.sql, b.params; useTransaction=true)
+
+        # 2) pega o ID gerado na MESMA conexão
+        df = executeQuery(conn, "SELECT LAST_INSERT_ID() AS id", [];
+                          useTransaction=false)
+        inserted_id = df.id[1]
     finally
         releaseConnection(conn)
     end
+
+    # 3) busca e retorna o registro criado
+    return findFirst(resolved; query=Dict("where"=>Dict(getPrimaryKeyColumn(resolved).name=>inserted_id)))
 end
 
-function findUniqueOrThrow(model::DataType, uniqueField, value)
-    local rec = findUnique(model, uniqueField, value)
-    isnothing(rec) && error("No unique record found")
-    return rec
-end
 
-function create(model::DataType, data::Dict)
-    local resolved = resolveModel(model)
-    local conn = dbConnection()
+"""
+    update(model::DataType, query::AbstractDict, data::Dict{String,Any})
+
+Updates records in `model` matching `query["where"]` with the fields in `data`,
+and returns the first updated instance.
+"""
+function update(model::DataType, query::AbstractDict, data::Dict{<:AbstractString,<:Any})
+    qdict    = normalizeQuery(query)
+    resolved = resolveModel(model)
+
+    if !haskey(qdict, "where")
+        error("Query dict must have a 'where' clause for update")
+    end
+
     try
-        local meta = modelConfig(resolved)
-        local modelFields = Set(String.(fieldnames(resolved)))
-        local filtered = Dict(k => v for (k,v) in data if k in modelFields)
-    
-        for col in meta.columns
-            if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
-                if !haskey(filtered, col.name)
-                    filtered[col.name] = generateUuid()
-                end
-            end
-        end
-    
-        local cols = join(keys(filtered), ", ")
-        local placeholders = join(fill("?", length(keys(filtered))), ", ")
-        local vals = collect(values(filtered))
-        local queryStr = "INSERT INTO " * meta.name * " (" * cols * ") VALUES (" * placeholders * ")"
-        local stmt = DBInterface.prepare(conn, queryStr)
-        executeQuery(conn, stmt, vals)
-    
-        for col in meta.columns
-            if occursin("UNIQUE", uppercase(join(col.constraints, " ")))
-                local uniqueValue = filtered[col.name]
-                return findFirst(resolved; query = Dict("where" => Dict(col.name => uniqueValue)))
-            end
-        end
-    
-        local id_result = executeQuery(conn, "SELECT LAST_INSERT_ID()"; useTransaction=true) |> DataFrame
-        local id = first(id_result)[1]
-        local pkCol = getPrimaryKeyColumn(resolved)
-        if pkCol !== nothing
-            return findFirst(resolved; query = Dict("where" => Dict(pkCol.name => id)))
-        end
-    
-        for col in meta.columns
-            if col.type == "VARCHAR(36)" && occursin("UUID", uppercase(join(col.constraints, " ")))
-                local uuid = filtered[col.name]
-                return findFirst(resolved; query = Dict("where" => Dict(col.name => uuid)))
-            end
-        end
-    
-        error("Não foi possível recuperar o registro inserido.")
-    finally
-        releaseConnection(conn)
+        b    = buildUpdateQuery(resolved, data, qdict["where"])
+        executeQuery(b.sql, b.params)
+        return findFirst(resolved; query=qdict)
+    catch e
+        rethrow(e)
     end
 end
 
-function update(model::DataType, query::AbstractDict, data::Dict)
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    local conn = dbConnection()
-    try
-        local modelFields = Set(String.(fieldnames(resolved)))
-        local filteredData = Dict(k => v for (k,v) in data if k in modelFields)
-        local assignments = join([ "$k = ?" for (k,_) in filteredData ], ", ")
-        local vals = collect(values(filteredData))
-    
-        if !haskey(query, "where")
-            error("Query dict must have a 'where' clause for update")
-        end
-        local whereClause = ""
-        local wherePart = query["where"]
-        if isa(wherePart, String)
-            whereClause = wherePart
-        elseif isa(wherePart, Dict)
-            whereClause = buildWhereClause(wherePart)
-        else
-            error("Invalid type for 'where' clause")
-        end
-    
-        local updateQuery = "UPDATE " * modelConfig(resolved).name * " SET " * assignments * " WHERE " * whereClause
-        local stmt = DBInterface.prepare(conn, updateQuery)
-        executeQuery(conn, stmt, vals)
-        
-        if isa(query["where"], Dict)
-            query["where"] = merge(query["where"], data)
-        end
-        return findFirst(resolved; query=query)
-    finally
-        releaseConnection(conn)
-    end
-end
 
-function upsert(model::DataType, uniqueField, value, data::Dict)
-    local resolved = resolveModel(model)
-    local found = findUnique(resolved, uniqueField, value)
-    if isnothing(found)
+"""
+    upsert(model::DataType, uniqueField, value, data::Dict{String,Any})
+
+Creates a new record if none exists with the given unique field, otherwise updates the existing record.
+"""
+function upsert(model::DataType, uniqueField, value, data::Dict{<:AbstractString,<:Any})
+    resolved = resolveModel(model)
+    existing = findUnique(resolved, uniqueField, value)
+    if isnothing(existing)
         return create(resolved, data)
     else
-        local queryDict = Dict("where" => Dict(uniqueField => value))
-        return update(resolved, queryDict, data)
+        q = Dict("where" => Dict(uniqueField => value))
+        return update(resolved, q, data)
     end
 end
 
-function delete(model::DataType, query::Dict)
-    query = normalizeQueryDict(query)
-    local resolved = resolveModel(model)
-    local conn = dbConnection()
+
+"""
+    delete(model::DataType, query::AbstractDict)
+
+Deletes records in `model` matching `query["where"]` and returns `true` on success.
+"""
+function delete(model::DataType, query::AbstractDict)
+    qdict = normalizeQuery(query)
+    if !haskey(qdict, "where")
+        error("Query dict must have a 'where' clause for delete")
+    end
+
     try
-        if !haskey(query, "where")
-            error("Query dict must have a 'where' clause for delete")
-        end
-        local whereClause = ""
-        local wherePart = query["where"]
-        if isa(wherePart, String)
-            whereClause = wherePart
-        elseif isa(wherePart, Dict)
-            whereClause = buildWhereClause(wherePart)
+        b    = buildDeleteQuery(resolveModel(model), qdict["where"])
+        executeQuery(b.sql, b.params)
+        return true
+    catch e
+        rethrow(e)
+    end
+end
+
+
+"""
+    buildBatchInsertQuery(model::DataType, records::Vector{Dict{String,Any}})
+
+Generates a single INSERT statement with placeholders for multiple records,
+returning (sql, params) suitable for prepared execution.
+"""
+function buildBatchInsertQuery(model::DataType, records::AbstractVector)
+    meta     = modelConfig(model)
+    colsList = [c.name for c in meta.columns if c.name != "id"]
+    cols = join(["`$(c)`" for c in colsList], ", ")
+    rowCount = length(records)
+    singleRowPh = "(" * join(fill("?", length(colsList)), ",") * ")"
+    allPh = join(fill(singleRowPh, rowCount), ",")
+    sql = "INSERT INTO $(meta.name) ($cols) VALUES $allPh"
+    params = reduce(vcat, [ [r[c] for c in colsList] for r in records ])
+    return (sql=sql, params=params)
+end
+
+
+"""
+    createMany(model::DataType, data::Vector{<:Dict};
+               chunkSize::Int=1000, transaction::Bool=true)
+
+Inserts multiple records in batches. Returns `true` on success.
+"""
+function createMany(model::DataType, data::Vector{<:Dict{String,<:Any}};
+                    chunkSize::Int=1000, transaction::Bool=true)
+    resolved = resolveModel(model)
+    conn = dbConnection()
+    try
+        if transaction
+            DBInterface.transaction(conn) do
+                for chunk in Iterators.partition(data, chunkSize)
+                    b    = buildBatchInsertQuery(resolved, chunk)
+                    executeQuery(conn, b.sql, b.params; useTransaction=false)
+                end
+            end
         else
-            error("Invalid type for 'where' clause")
+            for chunk in Iterators.partition(data, chunkSize)
+                b    = buildBatchInsertQuery(resolved, vec(chunk))
+                executeQuery(conn, b.sql, b.params; useTransaction=false)
+            end
         end
-    
-        local deleteQuery = "DELETE FROM " * modelConfig(resolved).name * " WHERE " * whereClause
-        local stmt = DBInterface.prepare(conn, deleteQuery)
-        executeQuery(conn, stmt, [])
         return true
     finally
         releaseConnection(conn)
     end
 end
 
-function createMany(model::DataType, dataList::Vector)
-    local resolved = resolveModel(model)
-    return [ create(resolved, data) for data in dataList ]
-end
 
-function createManyAndReturn(model::DataType, dataList::Vector{Dict})
-    createMany(model, dataList)
-    local resolved = resolveModel(model)
-    return findMany(resolved)
-end
+"""
+    updateMany(model::DataType, query, data::Dict{String,Any})
 
-function updateMany(model::DataType, query, data::Dict)
-    local q = normalizeQueryDict(query)
-    if !haskey(q, "where")
+Updates all records matching `query["where"]` with the given `data`
+and returns the updated instances.
+"""
+function updateMany(model::DataType, queryDt::AbstractDict, data::Dict{<:AbstractString,<:Any})
+    qdict    = normalizeQuery(queryDt)
+    if !haskey(qdict, "where")
         error("Query dict must have a 'where' clause for updateMany")
     end
-    local wherePart = q["where"]
-    local whereClause = ""
-    if isa(wherePart, String)
-        whereClause = wherePart
-    elseif isa(wherePart, Dict)
-        whereClause = buildWhereClause(wherePart)
-    else
-        error("Invalid type for 'where' clause")
-    end
+    resolved = resolveModel(model)
+    pkcol    = getPrimaryKeyColumn(resolved)
+    pkcol === nothing && error("No primary key defined for model $(resolved)")
+    original = findMany(resolved; query=queryDt)
+    ids      = [getfield(r, Symbol(pkcol.name)) for r in original]
+    b        = buildUpdateQuery(resolved, data, qdict["where"])
+    executeQuery(b.sql, b.params)
+    return findMany(resolved; query=Dict("where" => Dict(pkcol.name => Dict("in" => ids))))
+end
 
-    local resolved = resolveModel(model)
-    local conn = dbConnection()
+"""
+    updateManyAndReturn(model::DataType, query::AbstractDict, data::Dict{String,Any})
+
+Updates all records in `model` matching `query["where"]` with the values in `data`
+and returns the updated instances.
+"""
+function updateManyAndReturn(model::DataType, query::AbstractDict, data::Dict{<:AbstractString,<:Any})
+    qdict = normalizeQuery(query)
+    if !haskey(qdict, "where")
+        error("Query dict must have a 'where' clause for updateManyAndReturn")
+    end
+    resolved = resolveModel(model)
     try
-        local assignments = join([ "$k = ?" for (k, _) in data ], ", ")
-        local vals = collect(values(data))
-        local updateQuery = "UPDATE " * modelConfig(resolved).name *
-                            " SET " * assignments *
-                            " WHERE " * whereClause
-        local stmt = DBInterface.prepare(conn, updateQuery)
-        executeQuery(conn, stmt, vals)
-        if isa(q["where"], Dict)
-            q["where"] = merge(q["where"], data)
-        end
-        return findMany(resolved; query=q)
-    finally
-        releaseConnection(conn)
+        b    = buildUpdateQuery(resolved, data, qdict["where"])
+        executeQuery(b.sql, b.params)
+        return findMany(resolved; query=qdict)
+    catch e
+        rethrow(e)
     end
 end
 
-function updateManyAndReturn(model::DataType, query, data::Dict)
-    local q = normalizeQueryDict(query)
-    updateMany(model, q, data)
-    local resolved = resolveModel(model)
-    return findMany(resolved; query=q)
-end
+"""
+    deleteMany(model::DataType, query::AbstractDict=Dict())
 
-function deleteMany(model::DataType, query=Dict())
-    local q = normalizeQueryDict(query)
-    if !haskey(q, "where")
+Deletes all records in `model` matching `query["where"]` and returns `true` on success.
+"""
+function deleteMany(model::DataType, query::AbstractDict=Dict())
+    qdict = normalizeQuery(query)
+    if !haskey(qdict, "where")
         error("Query dict must have a 'where' clause for deleteMany")
     end
-    local wherePart = q["where"]
-    local whereClause = ""
-    if isa(wherePart, String)
-        whereClause = wherePart
-    elseif isa(wherePart, Dict)
-        whereClause = buildWhereClause(wherePart)
-    else
-        error("Invalid type for 'where' clause")
-    end
-
-    local resolved = resolveModel(model)
-    local conn = dbConnection()
+    resolved = resolveModel(model)
     try
-        local deleteQuery = "DELETE FROM " * modelConfig(resolved).name *
-                            " WHERE " * whereClause
-        local stmt = DBInterface.prepare(conn, deleteQuery)
-        executeQuery(conn, stmt, [])
+        b    = buildDeleteQuery(resolved, qdict["where"])
+        executeQuery(b.sql, b.params)
         return true
-    finally
-        releaseConnection(conn)
+    catch e
+        rethrow(e)
     end
 end
 
 # Métodos de instância já utilizam as funções acima
+"""
+    update(modelInstance)
+
+Updates the record corresponding to `modelInstance` in the database
+using its primary key, and returns the updated instance.
+"""
 function update(modelInstance)
-    local modelType = typeof(modelInstance)
-    local pkCol = getPrimaryKeyColumn(modelType)
-    pkCol === nothing && error("No primary key defined for model $(modelType)")
-    local pkName = pkCol.name
-    local id = getfield(modelInstance, Symbol(pkName))
-    local query = Dict("where" => Dict(pkName => id))
-    local data = Dict{String,Any}()
-    for field in fieldnames(modelType)
-        data[string(field)] = getfield(modelInstance, field)
-    end
-    return update(modelType, query, data)
+    modelType = typeof(modelInstance)
+    pkCol     = getPrimaryKeyColumn(modelType)
+    pkCol === nothing && error("No primary key defined for $(modelType)")
+    pkName    = pkCol.name
+    id        = getfield(modelInstance, Symbol(pkName))
+    data      = Dict{String,Any}(string(f) => getfield(modelInstance, f)
+                                  for f in fieldnames(modelType))
+    return update(modelType, Dict("where" => Dict(pkName => id)), data)
 end
 
+"""
+    delete(modelInstance)
+
+Deletes the record corresponding to `modelInstance` in the database
+using its primary key, and returns `true` on success.
+"""
 function delete(modelInstance)
-    local modelType = typeof(modelInstance)
-    local pkCol = getPrimaryKeyColumn(modelType)
-    pkCol === nothing && error("No primary key defined for model $(modelType)")
-    local pkName = pkCol.name
-    local id = getfield(modelInstance, Symbol(pkName))
-    local query = Dict("where" => Dict(pkName => id))
-    return delete(modelType, query)
+    modelType = typeof(modelInstance)
+    pkCol     = getPrimaryKeyColumn(modelType)
+    pkCol === nothing && error("No primary key defined for $(modelType)")
+    pkName    = pkCol.name
+    id        = getfield(modelInstance, Symbol(pkName))
+    return delete(modelType, Dict("where" => Dict(pkName => id)))
 end
 
-function Base.filter(model::DataType; kwargs...)
+import Base: filter
+
+"""
+    filter(model::DataType; kwargs...)
+
+Filters records of `model` by the keyword arguments provided
+and returns the matching instances.
+"""
+function filter(model::DataType; kwargs...)
     return findMany(model; query=Dict("where" => Dict(kwargs...)))
 end
