@@ -93,7 +93,8 @@ Model(
 
         @test hasMany(user, Post, "authorId")[1].title == "My First Post"
 
-        deleteManyResult = deleteMany(User, Dict("where" => Dict("1" => "1")))
+        @test_throws ErrorException deleteMany(User, Dict("where" => Dict()))
+        deleteManyResult = deleteMany(User, Dict("where" => Dict()), forceDelete=true)
         @test deleteManyResult === true
     end
 
@@ -115,7 +116,7 @@ Model(
     end
 
     @testset "OrionORM Pagination Tests" begin
-        deleteMany(User, Dict("where" => Dict("1" => "1")))
+        deleteMany(User, Dict("where" => Dict()), forceDelete=true)
 
         usersData = [ Dict("name" => "User $(i)", "email" => "user$(i)@example.com", "cpf" => string(1000 + i)) for i in 1:5 ]
         createdUsers = createMany(User, usersData)
@@ -138,7 +139,7 @@ Model(
     end
 
     @testset "OrionORM Bulk Operations & Benchmarks" begin
-        deleteMany(User, Dict("where" => Dict("1" => "1")))
+        deleteMany(User, Dict("where" => Dict()), forceDelete=true)
     
         N = 100
         user_payloads = [Dict("name" => "BenchUser$(i)",
@@ -167,7 +168,7 @@ Model(
     end
     
     @testset "OrionORM QueryBuilder operators" begin
-        deleteMany(User, Dict("where"=>Dict("1"=>"1")))
+        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
         create(User, Dict("name"=>"apple","email"=>"apple@e.com"))
         create(User, Dict("name"=>"banana","email"=>"banana@e.com"))
         create(User, Dict("name"=>"apricot","email"=>"apricot@e.com"))
@@ -177,13 +178,13 @@ Model(
         @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("endsWith"=>"ana"))))) == 1
         @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("in"=>["apple","banana"])))) ) == 2
         @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("notIn"=>["apple","banana"])))) ) == 1
-        @test length(findMany(User; query=Dict("where"=>Dict("not"=>Dict("name"=>"apple"))))) == 2
+        @test length(findMany(User; query=Dict("where"=>Dict("NOT"=> Dict("name"=>"apple"))))) == 2
         @test length(findMany(User; query=Dict("where"=>Dict("OR"=>[Dict("name"=>"apple"),Dict("name"=>"banana")])))) == 2
     end
     
     @testset "OrionORM Include edge cases" begin
-        deleteMany(Post, Dict("where"=>Dict("1"=>"1")))
-        deleteMany(User, Dict("where"=>Dict("1"=>"1")))
+        deleteMany(Post, Dict("where"=>Dict()), forceDelete=true)
+        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
     
         u = create(User, Dict("name"=>"nopost","email"=>"nopost@e.com"))
         res = findMany(User; query=Dict("where"=>Dict("name"=>"nopost"), "include"=>[Post]))
@@ -192,8 +193,8 @@ Model(
     end
     
     @testset "OrionORM Default timestamp" begin
-        deleteMany(Post, Dict("where"=>Dict("1"=>"1")))
-        deleteMany(User, Dict("where"=>Dict("1"=>"1")))
+        deleteMany(Post, Dict("where"=>Dict()), forceDelete=true)
+        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
     
         u = create(User, Dict("name"=>"u","email"=>"u@e.com"))
         p = create(Post, Dict("title"=>"t","authorId"=>u.id))
@@ -202,7 +203,7 @@ Model(
     end
     
     @testset "OrionORM updateMany" begin
-        deleteMany(User, Dict("where"=>Dict("1"=>"1")))
+        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
         data = [Dict("name"=>"A$i","email"=>"a$(i)@e.com") for i in 1:3]
     
         result = createMany(User, data)
@@ -216,7 +217,7 @@ Model(
     end
     
     @testset "OrionORM Transaction rollback" begin
-        deleteMany(User, Dict("where"=>Dict("1"=>"1")))
+        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
         user = create(User, Dict("name"=>"T","email"=>"t@e.com"))
     
         conn = dbConnection()

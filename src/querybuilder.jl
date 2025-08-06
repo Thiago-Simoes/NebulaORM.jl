@@ -13,7 +13,7 @@
 Recebe qualquer Dict compatível com a sintaxe Prisma e devolve
 `clause::String` (com placeholders `?`) e `params::Vector` na ordem certa.
 """
-function _build_where(whereDef)::NamedTuple{(:clause,:params)}
+function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
     conds  = String[]
     params = Any[]
 
@@ -21,13 +21,13 @@ function _build_where(whereDef)::NamedTuple{(:clause,:params)}
         ks = string(k)
 
         if ks == "AND" || ks == "OR"
-            sub = [_build_where(x) for x in v]
+            sub = [_build_where(x, table) for x in v]
             joined = join(["(" * s.clause * ")" for s in sub], " $ks ")
             append!(params, reduce(vcat, [s.params for s in sub], init = Any[]))
             push!(conds, joined)
 
-        elseif ks == "not"
-            sub = _build_where(v)
+        elseif ks == "NOT"
+            sub = _build_where(v, table)
             push!(conds, "NOT (" * sub.clause * ")")
             append!(params, sub.params)
 
@@ -42,29 +42,29 @@ function _build_where(whereDef)::NamedTuple{(:clause,:params)}
                     opos = string(op)
 
                     if opos == "gt"
-                        push!(conds, "`$ks` > ?");   push!(params, val)
+                        push!(conds, "`$table`.`$ks` > ?");   push!(params, val)
                     elseif opos == "gte"
-                        push!(conds, "`$ks` >= ?");  push!(params, val)
+                        push!(conds, "`$table`.`$ks` >= ?");  push!(params, val)
                     elseif opos == "lt"
-                        push!(conds, "`$ks` < ?");   push!(params, val)
+                        push!(conds, "`$table`.`$ks` < ?");   push!(params, val)
                     elseif opos == "lte"
-                        push!(conds, "`$ks` <= ?");  push!(params, val)
+                        push!(conds, "`$table`.`$ks` <= ?");  push!(params, val)
                     elseif opos == "eq"
-                        push!(conds, "`$ks` = ?");   push!(params, val)
+                        push!(conds, "`$table`.`$ks` = ?");   push!(params, val)
 
                     elseif opos == "contains"
-                        push!(conds, "`$ks` LIKE ?");  push!(params, "%$(val)%")
+                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "%$(val)%")
                     elseif opos == "startsWith"
-                        push!(conds, "`$ks` LIKE ?");  push!(params, "$(val)%")
+                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "$(val)%")
                     elseif opos == "endsWith"
-                        push!(conds, "`$ks` LIKE ?");  push!(params, "%$(val)")
+                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "%$(val)")
 
                     elseif opos == "in"
                         ph = join(fill("?", length(val)), ",")
-                        push!(conds, "`$ks` IN ($ph)"); append!(params, val)
+                        push!(conds, "`$table`.`$ks` IN ($ph)"); append!(params, val)
                     elseif opos == "notIn"
                         ph = join(fill("?", length(val)), ",")
-                        push!(conds, "`$ks` NOT IN ($ph)"); append!(params, val)
+                        push!(conds, "`$table`.`$ks` NOT IN ($ph)"); append!(params, val)
 
                     else
                         error("Operador desconhecido $opos")
@@ -73,7 +73,7 @@ function _build_where(whereDef)::NamedTuple{(:clause,:params)}
 
             else
                 # caso simples campo = valor
-                push!(conds, "$ks = ?")
+                push!(conds, "`$table`.`$ks` = ?")
                 push!(params, v)
             end
         end
@@ -102,24 +102,34 @@ function _build_join(root::DataType, include)::NamedTuple
 end
 
 # === SELECT ==============================================================
-function _build_select(baseTable::AbstractString, query)::String
-    if haskey(query,"select")
-        return join(query["select"],", ")
-    elseif haskey(query,"include")
-        return "$baseTable.*"
+function qualifyColumn(table, column)
+    return "`$table`.`$column`"
+end
+
+function qualifyTable(table)
+    return "`$table`"
+end
+
+# SELECT: qualifica cada coluna
+function _build_select(baseTable::String, query)::String
+    if haskey(query, "select")
+        cols = [qualifyColumn(baseTable, string(c)) for c in query["select"]]
+        return join(cols, ", ")
+    elseif haskey(query, "include")
+        return "$(qualifyTable(baseTable)).*"
     else
         return "*"
     end
 end
 
 # === ORDER ===============================================================
-function _build_order(order)::AbstractString
+function _build_order(order, table)::String
     if order isa String
-        return order                       # já veio validado
+        return order
     elseif order isa Dict
-        (col,dir) = first(order)
-        dir = uppercase(string(dir)) in ("ASC","DESC") ? dir : "ASC"
-        return "$col $dir"
+        (col, dir) = first(order)
+        dir = uppercase(string(dir)) in ("ASC","DESC") ? string(dir) : "ASC"
+        return "$(qualifyColumn(table, string(col))) $dir"
     else
         error("orderBy deve ser String ou Dict")
     end
@@ -127,32 +137,39 @@ end
 
 # === MAIN BUILDER ========================================================
 function buildJoinClause(rootModel::DataType, rel::Relationship)
-    local rootTable = modelConfig(rootModel).name
-    local includedModel = resolveModel(rel.targetModel)
-    
-    # Verifica se o modelo incluído está registrado; caso contrário, lança um erro.
-    if !haskey(modelRegistry, nameof(includedModel))
-        error("Model $(nameof(includedModel)) not registered")
-    end
-    local includedTable = modelRegistry[nameof(includedModel)].name
+    # resolve table names
+    rootTable     = modelConfig(rootModel).name
+    includedModel = resolveModel(rel.targetModel)
+    includedName  = nameof(includedModel)
 
+    # ensure model is registered
+    if !haskey(modelRegistry, includedName)
+        error("Model $includedName not registered")
+    end
+    includedTable = modelRegistry[includedName].name
+
+    # build join condition based on relationship type
     if rel.type in (:hasMany, :hasOne)
-        local pkCol = getPrimaryKeyColumn(rootModel)
-        if pkCol === nothing
-            error("No primary key for model $(rootModel)")
-        end
-        local joinCondition = "$rootTable." * pkCol.name * " = $includedTable." * rel.targetField
-        return ("INNER", includedModel, joinCondition)
+        pkCol = getPrimaryKeyColumn(rootModel)
+        isnothing(pkCol) && error("No primary key for model $(nameof(rootModel))")
+        joinCondition = string(
+            qualifyColumn(rootTable, pkCol.name), 
+            " = ", 
+            qualifyColumn(includedTable, rel.targetField)
+        )
     elseif rel.type == :belongsTo
-        local parentPk = getPrimaryKeyColumn(includedModel)
-        if parentPk === nothing
-            error("No primary key for model $(includedModel)")
-        end
-        local joinCondition = "$includedTable." * parentPk.name * " = $rootTable." * rel.field
-        return ("INNER", includedModel, joinCondition)
+        parentPk = getPrimaryKeyColumn(includedModel)
+        isnothing(parentPk) && error("No primary key for model $includedName")
+        joinCondition = string(
+            qualifyColumn(includedTable, parentPk.name), 
+            " = ", 
+            qualifyColumn(rootTable, rel.field)
+        )
     else
         error("Unknown relationship type $(rel.type)")
     end
+
+    return (joinType = "INNER", includedModel = includedModel, joinCondition = joinCondition)
 end
 
 
@@ -175,13 +192,13 @@ function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:param
 
     # WHERE
     if haskey(query,"where")
-        w = _build_where(query["where"])
+        w = _build_where(query["where"], baseTable)
         sql    *= " WHERE " * w.clause
         append!(params, w.params)
     end
 
     # ORDER / LIMIT / OFFSET
-    if haskey(query,"orderBy"); sql *= " ORDER BY " * _build_order(query["orderBy"]) end
+    if haskey(query,"orderBy"); sql *= " ORDER BY " * _build_order(query["orderBy"], baseTable) end
     if haskey(query,"limit");   sql *= " LIMIT ?" ; push!(params, query["limit"])    end
     if haskey(query,"offset");  sql *= " OFFSET ?" ; push!(params, query["offset"])  end
 
@@ -228,8 +245,8 @@ function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, q
         push!(params, v)
     end
     # reaproveita o _build_where para o WHERE
-    w = _build_where(query)
     tbl   = meta.name
+    w = _build_where(query, tbl)
     sql   = "UPDATE $tbl SET " * join(assigns, ", ") * " WHERE " * w.clause
     append!(params, w.params)
     return (sql=sql, params=params)
@@ -244,9 +261,18 @@ Gera:
 """
 function buildDeleteQuery(model::DataType, query::Dict{<:AbstractString,<:Any})
     meta   = modelConfig(model)
-    w      = _build_where(query)
+    tbl   = meta.name
+    w      = _build_where(query, tbl)
     sql    = "DELETE FROM " * meta.name * " WHERE " * w.clause
     return (sql=sql, params=w.params)
+end
+
+function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
+    isempty(query) && !forceDelete && error("Warning: Query must not be empty unless forceDelete is true! Proceed with caution.")
+    meta   = modelConfig(model)
+    tbl   = meta.name
+    sql    = "DELETE FROM " * meta.name * " WHERE 1=1"
+    return (sql=sql, params=[])
 end
 
 

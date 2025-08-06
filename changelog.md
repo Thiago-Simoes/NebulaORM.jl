@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2] - 2025-08-06
+### Fixed
+- Refactor buildJoinClause: now uses the new qualifyColumn helper to automatically wrap table and column names in backticks and fully qualify them in all JOIN conditions, eliminating ambiguous-column errors and keeping the code clean and consistent.
+
+## [0.5.1] - 2025-08-06
+- Fixed UUID field bug
+
 ## [0.5.0] - 2025-08-01
 ### Added
 

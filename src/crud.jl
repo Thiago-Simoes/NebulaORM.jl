@@ -281,14 +281,14 @@ end
 
 Deletes records in `model` matching `query["where"]` and returns `true` on success.
 """
-function delete(model::DataType, query::AbstractDict)
+function delete(model::DataType, query::AbstractDict; forceDelete::Bool=false)
     qdict = normalizeQuery(query)
     if !haskey(qdict, "where")
         error("Query dict must have a 'where' clause for delete")
     end
 
     try
-        b    = buildDeleteQuery(resolveModel(model), qdict["where"])
+        b    = buildDeleteQuery(resolveModel(model), qdict["where"], forceDelete)
         executeQuery(b.sql, b.params)
         return true
     catch e
@@ -394,14 +394,14 @@ end
 
 Deletes all records in `model` matching `query["where"]` and returns `true` on success.
 """
-function deleteMany(model::DataType, query::AbstractDict=Dict())
+function deleteMany(model::DataType, query::AbstractDict=Dict(); forceDelete::Bool=false)
     qdict = normalizeQuery(query)
     if !haskey(qdict, "where")
         error("Query dict must have a 'where' clause for deleteMany")
     end
     resolved = resolveModel(model)
     try
-        b    = buildDeleteQuery(resolved, qdict["where"])
+        b    = buildDeleteQuery(resolved, qdict["where"], forceDelete)
         executeQuery(b.sql, b.params)
         return true
     catch e
