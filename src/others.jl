@@ -19,3 +19,12 @@ end
 function generateUuid()
     return string(uuid4())
 end
+
+
+function isUUIDColumn(col)
+    if !occursin("VARCHAR(36)", col.type)
+        return false
+    end
+    constraintsStr = uppercase(join(col.constraints, " "))
+    return occursin("UUID", constraintsStr)
+end

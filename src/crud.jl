@@ -212,11 +212,8 @@ function create(model::DataType, data::Dict{<:AbstractString,<:Any})
     allowed  = Set(String.(fieldnames(resolved)))
     filtered = Dict(k=>v for (k,v) in data if k in allowed)
 
-    # gera UUID automático
     for col in meta.columns
-        if occursin("VARCHAR(36)" ,col.type) &&
-           "UUID" in uppercase(join(col.constraints," ")) &&
-           !haskey(filtered,col.name)
+        if isUUIDColumn(col) && !haskey(filtered, col.name)
             filtered[col.name] = generateUuid()
         end
     end
@@ -224,11 +221,9 @@ function create(model::DataType, data::Dict{<:AbstractString,<:Any})
     conn = dbConnection()
     inserted_id = nothing
     try
-        # 1) INSERT dentro de TRANSACTION implícito
         b = buildInsertQuery(resolved, filtered)
         executeQuery(conn, b.sql, b.params; useTransaction=true)
 
-        # 2) pega o ID gerado na MESMA conexão
         df = executeQuery(conn, "SELECT LAST_INSERT_ID() AS id", [];
                           useTransaction=false)
         inserted_id = df.id[1]
@@ -236,7 +231,6 @@ function create(model::DataType, data::Dict{<:AbstractString,<:Any})
         releaseConnection(conn)
     end
 
-    # 3) busca e retorna o registro criado
     return findFirst(resolved; query=Dict("where"=>Dict(getPrimaryKeyColumn(resolved).name=>inserted_id)))
 end
 
