@@ -97,7 +97,14 @@ filteredUsers = filter(User; name="Dan")
 
 #### Delete multiple records
 ```
-deleteManyResult = deleteMany(User, Dict("where" => "1=1"))
+deleteManyResult = deleteMany(User, Dict("where" => Dict("name" => "John")))
+```
+##### Delete all records
+```
+deleteMany(User, Dict())
+> Warning: Query must not be empty unless forceDelete is true! Proceed with caution.
+
+deleteMany(User, Dict(), forceDelete=true) # Works!
 ```
 
 #### Update Many and Return

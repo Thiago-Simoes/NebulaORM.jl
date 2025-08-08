@@ -17,6 +17,10 @@ function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
     conds  = String[]
     params = Any[]
 
+    if isempty(whereDef)
+        return (clause = "1=1", params = params)
+    end
+
     for (k,v) in whereDef
         ks = string(k)
 
@@ -251,7 +255,7 @@ function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, q
     append!(params, w.params)
     return (sql=sql, params=params)
 end
-
+ 
 
 """
     buildDeleteQuery(model::DataType, where::Dict)
@@ -259,22 +263,15 @@ end
 Gera:
   sql    = "DELETE FROM table WHERE (…)"; params = [where-params…]
 """
-function buildDeleteQuery(model::DataType, query::Dict{<:AbstractString,<:Any})
+function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
+    isempty(query) && !forceDelete && error("Warning: Query must not be empty unless forceDelete is true! Proceed with caution.")
+    
     meta   = modelConfig(model)
     tbl   = meta.name
     w      = _build_where(query, tbl)
     sql    = "DELETE FROM " * meta.name * " WHERE " * w.clause
     return (sql=sql, params=w.params)
 end
-
-function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
-    isempty(query) && !forceDelete && error("Warning: Query must not be empty unless forceDelete is true! Proceed with caution.")
-    meta   = modelConfig(model)
-    tbl   = meta.name
-    sql    = "DELETE FROM " * meta.name * " WHERE 1=1"
-    return (sql=sql, params=[])
-end
-
 
 
 # Mantém compatibilidade com chamadas antigas (sem Dict → retorno igual)
