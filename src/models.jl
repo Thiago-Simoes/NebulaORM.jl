@@ -18,32 +18,88 @@ function createTableDefinition(model::Model)
     end
     return allDefs
 end
-
-function migrate!(conn, model::Model)
-    schema = createTableDefinition(model)
-    # Usar interpolação para o nome da tabela e schema; sem binding de valores para identificadores.
-    query = "CREATE TABLE IF NOT EXISTS " * model.name * " (" * schema * ")"
-    stmt = DBInterface.prepare(conn, query)
-    DBInterface.execute(stmt, [])
+function table_exists(conn::DBInterface.Connection, table_name::String)::Bool
+    df = executeQuery(conn, """
+        SELECT COUNT(*) AS cnt
+          FROM information_schema.tables
+         WHERE table_schema = DATABASE()
+           AND table_name = ?""", [table_name]; useTransaction=false)
+    return df.cnt[1] > 0
 end
 
+function index_exists(conn::DBInterface.Connection, table_name::String, index_name::String)::Bool
+    df = executeQuery(conn, """
+        SELECT COUNT(*) AS cnt
+          FROM information_schema.statistics
+         WHERE table_schema = DATABASE()
+           AND table_name = ?
+           AND index_name = ?""", [table_name, index_name]; useTransaction=false)
+    return df.cnt[1] > 0
+end
 
+function constraint_exists(conn::DBInterface.Connection, table_name::String, constraint_name::String)::Bool
+    df = executeQuery(conn, """
+        SELECT COUNT(*) AS cnt
+          FROM information_schema.table_constraints
+         WHERE constraint_schema = DATABASE()
+           AND table_name = ?
+           AND constraint_name = ?""", [table_name, constraint_name]; useTransaction=false)
+    return df.cnt[1] > 0
+end
+
+# --- Migração idempotente de esquema, índices e FKs ---
+function migrate!(conn::DBInterface.Connection, meta::Model)
+    tbl = meta.name
+    # 1) Cria tabela se não existir
+    if !table_exists(conn, tbl)
+        schema = createTableDefinition(meta)
+        executeQuery(conn, "CREATE TABLE $tbl ($schema)", [];
+                     useTransaction=false)
+    end
+
+    # 2) Índices
+    for cols in get(indexesRegistry, Symbol(tbl), [])
+        idx_name = "idx_$(tbl)_$(join(cols, "_"))"
+        if !index_exists(conn, tbl, idx_name)
+            sql = "CREATE INDEX $idx_name ON $tbl ($(join(cols, ",")))"
+            executeQuery(conn, sql, [];
+                         useTransaction=false)
+        end
+    end
+
+    # 3) Foreign keys (relacionamentos)
+    for rel in get(relationshipsRegistry, Symbol(tbl), Relationship[])
+        fk_name = "fk_$(tbl)_$(rel.field)"
+        if !constraint_exists(conn, tbl, fk_name)
+            if rel.type == :belongsTo
+                ref_tbl = modelConfig(resolveModel(rel.targetModel)).name
+                sql = "ALTER TABLE $tbl ADD CONSTRAINT $fk_name FOREIGN KEY ($(rel.field)) REFERENCES $ref_tbl($(rel.targetField)) ON DELETE CASCADE ON UPDATE CASCADE"
+            else
+                tgt = modelConfig(resolveModel(rel.targetModel)).name
+                sql = "ALTER TABLE $tgt ADD CONSTRAINT $fk_name FOREIGN KEY ($(rel.targetField)) REFERENCES $tbl($(rel.field)) ON DELETE CASCADE ON UPDATE CASCADE"
+            end
+            executeQuery(conn, sql, [];
+                         useTransaction=false)
+        end
+    end
+end
 
 """
     Model(modelName::Symbol,
-                columnsDef::Vector{<:Tuple{String,String,Vector{<:Any}}};
-                relationshipsDef::Vector{<:Tuple{Symbol,Symbol,Symbol,Symbol}} = [])
+          columnsDef::Vector{<:Tuple{String,String,Vector{<:Any}}},
+          relationshipsDef::Vector{<:Tuple{Symbol,Symbol,Symbol,Symbol}} = [],
+          indexesDef::Vector{Vector{String}} = [] )
 
-Define um modelo em runtime, criando o `struct`, registrando-o no `modelRegistry`,
-executando a migração e cadastrando relacionamentos.
+Define um modelo em runtime, criando o `struct`, registrando no `modelRegistry`,
+registrando relacionamentos e índices em registries, e executando migração idempotente.
 """
 function Model(modelName::Symbol,
-                     columnsDef::Vector,
-                     relationshipsDef::Vector = [],
-                     context= @__MODULE__)
+               columnsDef::Vector,
+               relationshipsDef::Vector = [],
+               indexesDef::Vector{} = [] )
 
-    # 1) Monta os campos do struct com tipos Julia
-    field_exprs = Vector{Expr}()
+    # 1) Monta campos do struct com tipos Julia
+    field_exprs = Expr[]
     for (col_name, sql_type, _) in columnsDef
         julia_ty = mapSqlTypeToJulia(sql_type)
         push!(field_exprs, :( $(Symbol(col_name))::$(julia_ty) ))
@@ -55,33 +111,47 @@ function Model(modelName::Symbol,
             $(field_exprs...)
         end
     end
-    @eval Main $struct_expr   # injeta no módulo Main
+    @eval Main $struct_expr
 
-    columns_vec = [ Column(name, sql_type, constraints) 
-                    for (name, sql_type, constraints) in columnsDef ]
+    # 3) Cria meta e registra no modelRegistry
+    columns_vec = [ Column(name, sql_type, constraints) for (name, sql_type, constraints) in columnsDef ]
+    meta = Model(string(modelName), columns_vec, getfield(Main, modelName))
+    modelRegistry[Symbol(modelName)] = meta
 
-    model_meta = Model(string(modelName), columns_vec, getfield(Main, modelName))
-    modelRegistry[Symbol(modelName)] = model_meta
-    conn = dbConnection()
-    migrate!(conn, model_meta)
-
+    # 4) Registra relacionamentos e índices
     if !isempty(relationshipsDef)
         rel_objs = Relationship[]
         for (fld, tgt, tgtfld, rtype) in relationshipsDef
-            push!(rel_objs,
-                 Relationship(string(fld), Symbol(tgt), string(tgtfld), rtype))
-            rev_type::Symbol = ((rtype == :belongsTo) ? :hasMany : (rtype == :hasMany ? :belongsTo : rtype))
-            rev_rel = Relationship("reverse_$(fld)_$(modelName)", modelName, string(fld), rev_type)
-            arr = get!(relationshipsRegistry, Symbol(tgt), Relationship[])
-            push!(arr, rev_rel)
-            relationshipsRegistry[Symbol(tgt)] = arr
+            push!(rel_objs, Relationship(string(fld), Symbol(tgt), string(tgtfld), rtype))
         end
         relationshipsRegistry[Symbol(modelName)] = rel_objs
+
+        # Create a reverse relationship for belongsTo
+        for rel in rel_objs
+            if rel.type == :belongsTo
+                parentModel = resolveModel(rel.targetModel)
+                parentName = nameof(parentModel)
+                revRel = Relationship(rel.targetField, Symbol(modelName), rel.field, :hasMany)
+                if haskey(relationshipsRegistry, Symbol(parentName))
+                    push!(relationshipsRegistry[Symbol(parentName)], revRel)
+                else
+                    relationshipsRegistry[Symbol(parentName)] = [revRel]
+                end
+            end
+        end
+    end
+    indexesRegistry[Symbol(modelName)] = indexesDef
+
+    # 5) Executa migração idempotente (tabela + índices + FKs)
+    conn = dbConnection()
+    try
+        migrate!(conn, meta)
+    finally
+        releaseConnection(conn)
     end
 
-    return getfield(Main, modelName) # retorna o tipo criado
+    return getfield(Main, modelName)
 end
-
 
 function resolveModel(modelRef)
     if modelRef isa QuoteNode

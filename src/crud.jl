@@ -53,6 +53,9 @@ function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params:
         elseif startswith(uppercase(strip(sql)), "INSERT") || startswith(uppercase(strip(sql)), "UPDATE") || startswith(uppercase(strip(sql)), "DELETE")
             isa(result, Bool) && return result  # se for um booleano, retorna ele
             return result.rows_affected
+            # ERROR: MethodError: no method matching Bool(::MySQL.Cursor{true})
+        elseif isa(result, MySQL.Cursor)
+            return true
         else
             return Bool(result)
         end

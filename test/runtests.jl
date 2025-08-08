@@ -15,8 +15,8 @@ using OrionORM
 using DBInterface
 
 conn = dbConnection()
-dropTable!(conn, "User")
 dropTable!(conn, "Post")
+dropTable!(conn, "User")
 releaseConnection(conn)
 
 Model(
@@ -25,6 +25,10 @@ Model(
         ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
         ("name", VARCHAR(50), [NotNull()]),
         ("email", TEXT(), [Unique(), NotNull()])
+    ],
+    [], # Relationship
+    [
+        ["id", "name"] # Indexes
     ]
 )
 

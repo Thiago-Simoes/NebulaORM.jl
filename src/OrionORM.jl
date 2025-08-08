@@ -22,6 +22,7 @@ include("./crud.jl")
 # ---------------------------
 # Global registry for associating model metadata (using the model name as key)
 const modelRegistry = Dict{Symbol, Model}()
+const indexesRegistry = Dict{Symbol, Vector}()
 
 # Global registry for associating model relationships (using the model name as key)
 const relationshipsRegistry = Dict{Symbol, Vector{Relationship}}()
