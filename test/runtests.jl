@@ -22,6 +22,7 @@ function recreate_with_raw_sql!() # Simulate a database with a known schema
     conn = dbConnection()
     try
         exec!(conn, "DROP TABLE IF EXISTS `post`")
+        exec!(conn, "DROP TABLE IF EXISTS `profile`")
         exec!(conn, "DROP TABLE IF EXISTS `user`")
 
         exec!(conn, """
@@ -48,6 +49,16 @@ function recreate_with_raw_sql!() # Simulate a database with a known schema
                 ON UPDATE CASCADE ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+
+        exec!(conn, """
+            CREATE TABLE `profile` (
+              `id` INT NOT NULL AUTO_INCREMENT,
+              `userId` INT NOT NULL,
+              `phone` VARCHAR(20) NOT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `ux_profile_user` (`userId`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
     finally
         releaseConnection(conn)
     end
@@ -64,6 +75,7 @@ recreate_with_raw_sql!()
         # Clean database state and re-run migration
         exec!(dbConnection(), "DROP TABLE IF EXISTS `post`")
         exec!(dbConnection(), "DROP TABLE IF EXISTS `user`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `profile`")
         resetORM!()
         
         tWrapped = "begin\n$(schema)\nend"
@@ -120,7 +132,7 @@ recreate_with_raw_sql!()
 
         @test hasMany(userSelected, post, "authorId")[1].title == "My First post"
 
-        @test_throws ErrorException deleteMany(user, Dict("where" => Dict()))
+        @test_throws OrionORM.UnsafeDeleteError deleteMany(user, Dict("where" => Dict()))
         deleteManyResult = deleteMany(user, Dict("where" => Dict()), forceDelete=true)
         @test deleteManyResult === true
     end
@@ -195,8 +207,8 @@ recreate_with_raw_sql!()
     end
 
     @testset "Error handling" begin
-        @test_throws ErrorException update(user, Dict(), Dict("name"=>"x"))
-        @test_throws ErrorException delete(user, Dict())
+        @test_throws OrionORM.InvalidQueryError update(user, Dict(), Dict("name"=>"x"))
+        @test_throws OrionORM.InvalidQueryError delete(user, Dict())
     end
     
     @testset "QueryBuilder operators" begin
@@ -257,7 +269,7 @@ recreate_with_raw_sql!()
             begin
                 @test_throws ErrorException DBInterface.transaction(conn) do
                     OrionORM.executeQuery(conn, "UPDATE user SET name = ? WHERE id = ?", ["X", userSelected.id]; useTransaction=false)
-                    error("fail")
+                    error("Simulated error to trigger rollback")
                 end
             end
         finally

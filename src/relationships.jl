@@ -1,8 +1,7 @@
-
 # ---------------------------
 # Relationship Helper Functions
 # ---------------------------
-# Versão registrada (usando metadados)
+
 function hasMany(parentInstance, relationName)
     parentType = typeof(parentInstance)
     relationships = getRelationships(parentType)
@@ -10,20 +9,20 @@ function hasMany(parentInstance, relationName)
         if rel.field == relationName && rel.type == :hasMany
             pkCol = getPrimaryKeyColumn(parentType)
             if pkCol === nothing
-                error("No primary key defined for model $(parentType)")
+                throw(MissingPrimaryKeyError(nameof(parentType)))
             end
             parentValue = getfield(parentInstance, Symbol(pkCol.name))
             return findMany(resolveModel(rel.targetModel); query=Dict("where" => Dict(rel.targetField => parentValue)))
         end
     end
-    error("No hasMany relationship found with name $relationName for model $(parentType)")
+    throw(InexistingRelationship(relationName, nameof(parentType)))
 end
 
 function hasMany(parentInstance, relatedModel::DataType, foreignKey::String)
     local parentType = typeof(parentInstance)
     local pkCol = getPrimaryKeyColumn(parentType)
     if pkCol === nothing
-        error("No primary key defined for model $(parentType)")
+        throw(MissingPrimaryKeyError(nameof(parentType)))
     end
     local parentValue = getfield(parentInstance, Symbol(pkCol.name))
     return findMany(relatedModel; query=Dict("where" => Dict(foreignKey => parentValue)))
@@ -38,7 +37,7 @@ function belongsTo(childInstance, relationName)
             return findFirst(resolveModel(rel.targetModel); query=Dict("where" => Dict(rel.targetField => childFKValue)))
         end
     end
-    error("No belongsTo relationship found with name $relationName for model $(childType)")
+    throw(InexistingRelationship(relationName, nameof(childType)))
 end
 
 # Overload para belongsTo com 3 parâmetros

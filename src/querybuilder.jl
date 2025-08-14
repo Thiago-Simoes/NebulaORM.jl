@@ -71,7 +71,7 @@ function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
                         push!(conds, "`$table`.`$ks` NOT IN ($ph)"); append!(params, val)
 
                     else
-                        error("Operador desconhecido $opos")
+                        error("Unknown operator $opos")
                     end
                 end
 
@@ -96,7 +96,7 @@ function _build_join(root::DataType, include)::NamedTuple
         rels = getRelationships(root)
         wanted = Symbol(isa(inc, String) ? inc : nameof(inc))
         rel = findfirst(r->resolveModel(r.targetModel) === resolveModel(wanted), rels)
-        isnothing(rel) && error("No relationship to $(wanted) from $(root)")
+        isnothing(rel) && throw(RelationshipError(wanted, nameof(root)))
         _, incModel, cond = buildJoinClause(root, rels[rel])
         incTable = modelConfig(incModel).name
         push!(joins, " LEFT JOIN $incTable ON $cond ")
@@ -132,8 +132,11 @@ function _order_fragment(model::DataType, pair)::String
     meta = modelConfig(model)
     allowed = Set(c.name for c in meta.columns)
     scol = string(col)
-    scol in allowed || error("orderBy: coluna inválida '$scol'")
-    sdir = uppercase(string(dir)) in ("ASC","DESC") ? uppercase(string(dir)) : "ASC"
+    if !(scol in allowed)
+        throw(OrderByError("invalid column '$scol' for model $(nameof(model))"))
+    end
+    sdir = uppercase(string(dir)) in ("ASC","DESC") ? uppercase(string(dir)) :
+           throw(OrderByError("direction must be ASC or DESC, got '$dir'"))
     return "`$(meta.name)`.`$scol` $sdir"
 end
 
@@ -141,35 +144,32 @@ function _build_order(order, model::DataType)::String
     if order isa Dict
         return _order_fragment(model, order)
     elseif order isa Vector
-        isempty(order) && error("orderBy: empty vector is not allowed")
+        isempty(order) && throw(OrderByError("empty vector is not allowed"))
         parts = String[]
         for o in order
-            o isa Dict || error("orderBy: each element must be a Dict")
+            o isa Dict || throw(OrderByError("each element must be a Dict, got $(typeof(o))"))
             push!(parts, _order_fragment(model, o))
         end
         return join(parts, ", ")
     else
-        error("orderBy must be a Dict or a Vector{Dict}; ex: [Dict(\"name\"=>\"asc\"), Dict(\"id\"=>\"desc\")]")
+        throw(OrderByError("orderBy must be Dict or Vector{Dict}; e.g. [Dict(\"name\"=>\"asc\")]"))
     end
 end
 
 # === MAIN BUILDER ========================================================
 function buildJoinClause(rootModel::DataType, rel::Relationship)
-    # resolve table names
     rootTable     = modelConfig(rootModel).name
     includedModel = resolveModel(rel.targetModel)
     includedName  = nameof(includedModel)
 
-    # ensure model is registered
     if !haskey(modelRegistry, includedName)
-        error("Model $includedName not registered")
+        throw(ModelNotRegisteredError(includedName))
     end
     includedTable = modelRegistry[includedName].name
 
-    # build join condition based on relationship type
     if rel.type in (:hasMany, :hasOne)
         pkCol = getPrimaryKeyColumn(rootModel)
-        isnothing(pkCol) && error("No primary key for model $(nameof(rootModel))")
+        isnothing(pkCol) && throw(MissingPrimaryKeyError(nameof(rootModel)))
         joinCondition = string(
             qualifyColumn(rootTable, pkCol.name), 
             " = ", 
@@ -177,14 +177,14 @@ function buildJoinClause(rootModel::DataType, rel::Relationship)
         )
     elseif rel.type == :belongsTo
         parentPk = getPrimaryKeyColumn(includedModel)
-        isnothing(parentPk) && error("No primary key for model $includedName")
+        isnothing(parentPk) && throw(MissingPrimaryKeyError(nameof(includedModel)))
         joinCondition = string(
             qualifyColumn(includedTable, parentPk.name), 
             " = ", 
             qualifyColumn(rootTable, rel.field)
         )
     else
-        error("Unknown relationship type $(rel.type)")
+        throw(InvalidQueryError("Unknown relationship type $(rel.type)"))
     end
 
     return (joinType = "INNER", includedModel = includedModel, joinCondition = joinCondition)
@@ -194,7 +194,7 @@ end
 """
     buildSqlQuery(model::DataType, query::Dict)
 
-Devolve `(sql,params)` prontos para `DBInterface.prepare/execute`.
+Generate SQL query and parameters for a given model and query definition.
 """
 function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:params)}
     baseTable = modelConfig(model).name
@@ -278,7 +278,7 @@ Gera:
   sql    = "DELETE FROM table WHERE (…)"; params = [where-params…]
 """
 function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
-    isempty(query) && !forceDelete && error("Warning: Query must not be empty unless forceDelete is true! Proceed with caution.")
+    isempty(query) && !forceDelete && throw(UnsafeDeleteError("Provide a WHERE clause or set forceDelete=true explicitly"))
     
     meta   = modelConfig(model)
     tbl   = meta.name
@@ -288,7 +288,6 @@ function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
 end
 
 
-# Mantém compatibilidade com chamadas antigas (sem Dict → retorno igual)
 normalizeQuery(q::AbstractDict) = Dict{String,Any}(string(k)=>v for (k,v) in q)
 normalizeQuery(q::NamedTuple) = Dict{String,Any}(string(k)=>v for (k,v) in pairs(q))
 

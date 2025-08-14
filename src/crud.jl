@@ -65,6 +65,8 @@ function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params:
         else
             return Bool(result)
         end
+    catch e
+        throw(DBExecutionError(sql, params, e))
     finally
         try DBInterface.close!(stmt) catch _ end
     end
@@ -232,7 +234,7 @@ function findUnique(model::DataType, uniqueField, value; query::AbstractDict=Dic
         if qdict["where"] isa Dict
             qdict["where"][uniqueField] = value
         else
-            error("The 'where' field must be a Dict")
+            throw(InvalidQueryError("The 'where' field must be a Dict"))
         end
     else
         qdict["where"] = Dict(uniqueField => value)
@@ -299,7 +301,7 @@ function update(model::DataType, query::AbstractDict, data::Dict{<:AbstractStrin
     resolved = resolveModel(model)
 
     if !haskey(qdict, "where")
-        error("Query dict must have a 'where' clause for update")
+        throw(InvalidQueryError("Query dict must have a 'where' clause for update"))
     end
 
     try
@@ -337,7 +339,7 @@ Deletes records in `model` matching `query["where"]` and returns `true` on succe
 function delete(model::DataType, query::AbstractDict; forceDelete::Bool=false)
     qdict = normalizeQuery(query)
     if !haskey(qdict, "where")
-        error("Query dict must have a 'where' clause for delete")
+        throw(InvalidQueryError("Query dict must have a 'where' clause for delete"))
     end
 
     try
@@ -357,7 +359,7 @@ Generates a single INSERT statement with placeholders for multiple records,
 returning (sql, params) suitable for prepared execution.
 """
 function buildBatchInsertQuery(model::DataType, records::AbstractVector)
-    isempty(records) && error("records não pode ser vazio")
+    isempty(records) && throw(EmptyRecordsError())
 
     meta = modelConfig(model)
     colsByName = Dict(c.name => c for c in meta.columns)
@@ -436,7 +438,7 @@ and returns the updated instances.
 function updateMany(model::DataType, queryDt::AbstractDict, data::Dict{<:AbstractString,<:Any})
     qdict    = normalizeQuery(queryDt)
     if !haskey(qdict, "where")
-        error("Query dict must have a 'where' clause for updateMany")
+        throw(InvalidQueryError("Query dict must have a 'where' clause for updateMany"))
     end
     resolved = resolveModel(model)
     pkcol    = getPrimaryKeyColumn(resolved)
@@ -457,7 +459,7 @@ and returns the updated instances.
 function updateManyAndReturn(model::DataType, query::AbstractDict, data::Dict{<:AbstractString,<:Any})
     qdict = normalizeQuery(query)
     if !haskey(qdict, "where")
-        error("Query dict must have a 'where' clause for updateManyAndReturn")
+        throw(InvalidQueryError("Query dict must have a 'where' clause for updateManyAndReturn"))
     end
     resolved = resolveModel(model)
     try
@@ -477,7 +479,7 @@ Deletes all records in `model` matching `query["where"]` and returns `true` on s
 function deleteMany(model::DataType, query::AbstractDict=Dict(); forceDelete::Bool=false)
     qdict = normalizeQuery(query)
     if !haskey(qdict, "where")
-        error("Query dict must have a 'where' clause for deleteMany")
+        throw(InvalidQueryError("Query dict must have a 'where' clause for deleteMany"))
     end
     resolved = resolveModel(model)
     try

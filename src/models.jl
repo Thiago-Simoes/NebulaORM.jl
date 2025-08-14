@@ -18,6 +18,7 @@ function createTableDefinition(model::Model)
     end
     return allDefs
 end
+
 function table_exists(conn::DBInterface.Connection, table_name::String)::Bool
     df = executeQuery(conn, """
         SELECT COUNT(*) AS cnt
@@ -162,19 +163,19 @@ function resolveModel(modelRef)
     elseif modelRef isa DataType
         return modelRef
     else
-        error("Referência de modelo inválida: $modelRef")
+        error("Invalid reference: $modelRef")
     end
 end
 
 # ---------------------------
-# Helpers: Metadados e conversão de registros
+# Helpers
 # ---------------------------
 function modelConfig(model::DataType)
-    local key = nameof(model)
+    key = nameof(model)
     if haskey(modelRegistry, key)
         return modelRegistry[key]
     else
-        error("Model $(key) not registered")
+        throw(ModelNotRegisteredError(key))
     end
 end
 

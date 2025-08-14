@@ -8,6 +8,8 @@ using DataFrames
 using Dates
 using Logging
 
+include("./errors.jl")
+
 include("./pool.jl")
 include("./dbconnection.jl")
 include("./types.jl")

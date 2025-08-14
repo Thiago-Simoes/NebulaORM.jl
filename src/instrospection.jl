@@ -132,7 +132,7 @@ function mapColumnDef(row)::Tuple{String,String,Vector{Any}}
     elseif sql_type == "JSON"
         "JSON()"
     else
-        error("Unsupported SQL type: $sql_type")
+        throw(UnsupportedSQLTypeError(sql_type))
     end
     cons = String[]
     push!(cons, row.IS_NULLABLE == "NO" ? string(NotNull()) : nothing)
@@ -212,7 +212,12 @@ function generateModels()::String
             for (name, sqlty, cons) in cols_defs
                 println(buf, "  (\"$name\", $sqlty, $(cons)),")
             end
-            println(buf, "], $(rels), $((idxs)))")
+            
+            if isempty(idxs)
+                println(buf, "], $(rels))")
+            else
+                println(buf, "], $(rels), $((idxs)))")
+            end
         catch err
             @warn "Skipping table $tbl due to generation error: $err"
         end
