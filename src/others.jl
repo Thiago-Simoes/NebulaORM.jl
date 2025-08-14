@@ -16,7 +16,7 @@ function serialize(instance)
 end
 
 
-function generateUuid()
+function generateUUID()
     return string(uuid4())
 end
 

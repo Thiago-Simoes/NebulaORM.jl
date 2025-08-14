@@ -14,54 +14,77 @@ DotEnv.load!()
 using OrionORM
 using DBInterface
 
-conn = dbConnection()
-dropTable!(conn, "Post")
-dropTable!(conn, "User")
-releaseConnection(conn)
+function exec!(conn, sql, params=Any[])
+    OrionORM.executeQuery(conn, sql, params; useTransaction=false)
+end
 
-Model(
-    :User,
-    [
-        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
-        ("name", VARCHAR(50), [NotNull()]),
-        ("email", TEXT(), [Unique(), NotNull()])
-    ],
-    [], # Relationship
-    [
-        ["id", "name"] # Indexes
-    ]
-)
+function recreate_with_raw_sql!() # Simulate a database with a known schema
+    conn = dbConnection()
+    try
+        exec!(conn, "DROP TABLE IF EXISTS `post`")
+        exec!(conn, "DROP TABLE IF EXISTS `user`")
 
-Model(
-    :Post,
-    [
-        ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
-        ("title", TEXT(), [NotNull()]),
-        ("authorId", INTEGER(), [NotNull()]),
-        ("createdAt", TIMESTAMP(), [NotNull(), Default("CURRENT_TIMESTAMP()")])
-    ],
-    [
-        ("authorId", User, "id", :belongsTo)
-    ]
-)
+        exec!(conn, """
+            CREATE TABLE `user` (
+              `id` INT NOT NULL AUTO_INCREMENT,
+              `name` VARCHAR(50) NOT NULL,
+              `email` VARCHAR(200) NOT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `ux_user_email` (`email`),
+              KEY `ix_user_id_name` (`id`,`name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
 
+        exec!(conn, """
+            CREATE TABLE `post` (
+              `id` INT NOT NULL AUTO_INCREMENT,
+              `title` TEXT NOT NULL,
+              `authorId` INT NOT NULL,
+              `createdAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP(),
+              PRIMARY KEY (`id`),
+              KEY `ix_post_author` (`authorId`),
+              CONSTRAINT `fk_post_author`
+                FOREIGN KEY (`authorId`) REFERENCES `user`(`id`)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+    finally
+        releaseConnection(conn)
+    end
+end
+
+
+recreate_with_raw_sql!()
 
 @testset verbose = true "OrionORM" begin
-    @testset "OrionORM Basic CRUD Tests" begin
+    @testset "Schema Introspection" begin
+        schema = generateModels()  # Generate the schema from the database
+        @test length(schema) > 0
+
+        # Clean database state and re-run migration
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `post`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `user`")
+        resetORM!()
+        
+        tWrapped = "begin\n$(schema)\nend"
+        eval(Meta.parse(tWrapped))
+    end
+
+    @testset "Basic CRUD Tests" begin
         userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
-        user = create(User, userData)
-        @test user.name == "Thiago"
-        @test user.email == "thiago@example.com"
-        @test hasproperty(user, :id) 
+        userSelected = create(user, userData)
+        @test userSelected.name == "Thiago"
+        @test userSelected.email == "thiago@example.com"
+        @test hasproperty(userSelected, :id) 
 
-        foundUser = findFirst(User; query=Dict("where" => Dict("name" => "Thiago")))
+        foundUser = findFirst(user; query=Dict("where" => Dict("name" => "Thiago")))
         @test foundUser !== nothing
-        @test foundUser.id == user.id
+        @test foundUser.id == userSelected.id
 
-        updatedUser = update(User, Dict("where" => Dict("id" => user.id)), Dict("name" => "Thiago Updated"))
+        updatedUser = update(user, Dict("where" => Dict("id" => userSelected.id)), Dict("name" => "Thiago Updated"))
         @test updatedUser.name == "Thiago Updated"
 
-        upsertUser = upsert(User, "email", "thiago@example.com",
+        upsertUser = upsert(user, "email", "thiago@example.com",
                             Dict("name" => "Thiago Upserted", "email" => "thiago@example.com"))
         @test upsertUser.name == "Thiago Upserted"
 
@@ -76,159 +99,164 @@ Model(
             Dict("name" => "Bob", "email" => "bob@example.com", "cpf" => "11111111111"),
             Dict("name" => "Carol", "email" => "carol@example.com", "cpf" => "22222222222")
         ]
-        createdRecords = createMany(User, records)
+        createdRecords = createMany(user, records)
         @test createdRecords == true
 
-        manyUsers = findMany(User)
+        manyUsers = findMany(user)
         @test length(manyUsers) ≥ 2
 
-        uMany = updateMany(User, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
+        uMany = updateMany(user, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
         
         for u in uMany
             @test u.name == "Bob Updated"
         end
 
         userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
-        user = create(User, userData)
-        postData = Dict("title" => "My First Post", "authorId" => user.id)
-        post = create(Post, postData)
-        @test post.title == "My First Post"
-        @test post.authorId == user.id
+        userSelected = create(user, userData)
+        postData = Dict("title" => "My First post", "authorId" => userSelected.id)
+        postSelected = create(post, postData)
+        @test postSelected.title == "My First post"
+        @test postSelected.authorId == userSelected.id
 
-        @test hasMany(user, Post, "authorId")[1].title == "My First Post"
+        @test hasMany(userSelected, post, "authorId")[1].title == "My First post"
 
-        @test_throws ErrorException deleteMany(User, Dict("where" => Dict()))
-        deleteManyResult = deleteMany(User, Dict("where" => Dict()), forceDelete=true)
+        @test_throws ErrorException deleteMany(user, Dict("where" => Dict()))
+        deleteManyResult = deleteMany(user, Dict("where" => Dict()), forceDelete=true)
         @test deleteManyResult === true
     end
 
-    @testset "OrionORM Relationships Tests" begin
+    @testset "Relationships Tests" begin
         userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
-        user = create(User, userData)
+        userSelected = create(user, userData)
 
-        foundUser = findFirst(User; query=Dict("where" => Dict("name" => "Thiago")))
+        foundUser = findFirst(user; query=Dict("where" => Dict("name" => "Thiago")))
 
-        postData = Dict("title" => "My First Post", "authorId" => user.id)
-        post = create(Post, postData)
+        postData = Dict("title" => "My First post", "authorId" => userSelected.id)
+        postSelected = create(post, postData)
 
-        userWithPosts = findFirst(User; query=Dict("where" => Dict("name" => "Thiago"), "include" => [Post]))
-        @test length(userWithPosts["Post"]) == 1
-        @test typeof(userWithPosts["Post"][1]) <: Post
-        @test userWithPosts["Post"][1].title == "My First Post"
-        @test userWithPosts["Post"][1].authorId == user.id
+        userWithPosts = findFirst(user; query=Dict("where" => Dict("name" => "Thiago"), "include" => [post]))
+        @test length(userWithPosts["post"]) == 1
+        @test typeof(userWithPosts["post"][1]) <: post
+        @test userWithPosts["post"][1].title == "My First post"
+        @test userWithPosts["post"][1].authorId == userSelected.id
 
     end
 
-    @testset "OrionORM Pagination Tests" begin
-        deleteMany(User, Dict("where" => Dict()), forceDelete=true)
+    @testset "Pagination Tests" begin
+        deleteMany(user, Dict("where" => Dict()), forceDelete=true)
 
-        usersData = [ Dict("name" => "User $(i)", "email" => "user$(i)@example.com", "cpf" => string(1000 + i)) for i in 1:5 ]
-        createdUsers = createMany(User, usersData)
+        usersData = [ Dict("name" => "user $(i)", "email" => "userSelected$(i)@example.com", "cpf" => string(1000 + i)) for i in 1:5 ]
+        createdUsers = createMany(user, usersData)
         @test createdUsers == true
-        @test length(findMany(User)) == 5  
+        @test length(findMany(user)) == 5  
 
-        page1 = findMany(User; query=Dict("limit" => 2, "offset" => 0, "orderBy" => "id"))
+        page1 = findMany(user; query=Dict("limit" => 2, "offset" => 0, "orderBy" => Dict("id" => "ASC")))
         @test length(page1) == 2
-        @test page1[1].name == "User 1"
-        @test page1[2].name == "User 2"
+        @test page1[1].name == "user 1"
+        @test page1[2].name == "user 2"
 
-        page2 = findMany(User; query=Dict("limit" => 2, "offset" => 2, "orderBy" => "id"))
+        page1rev = findMany(user; query=Dict("limit" => 2, "offset" => 0, "orderBy" => Dict("id" => "DESC")))
+        @test length(page1rev) == 2
+        @test page1rev[1].name == "user 5"
+        @test page1rev[2].name == "user 4"
+
+        page2 = findMany(user; query=Dict("limit" => 2, "offset" => 2, "orderBy" => Dict("id" => "ASC")))
         @test length(page2) == 2
-        @test page2[1].name == "User 3"
-        @test page2[2].name == "User 4"
+        @test page2[1].name == "user 3"
+        @test page2[2].name == "user 4"
 
-        page3 = findMany(User; query=Dict("limit" => 2, "offset" => 4, "orderBy" => "id"))
+        page3 = findMany(user; query=Dict("limit" => 2, "offset" => 4, "orderBy" => Dict("id" => "ASC")))
         @test length(page3) == 1
-        @test page3[1].name == "User 5"
+        @test page3[1].name == "user 5"
     end
 
-    @testset "OrionORM Bulk Operations & Benchmarks" begin
-        deleteMany(User, Dict("where" => Dict()), forceDelete=true)
+    @testset "Bulk Operations & Benchmarks" begin
+        deleteMany(user, Dict("where" => Dict()), forceDelete=true)
     
         N = 100
         user_payloads = [Dict("name" => "BenchUser$(i)",
                               "email" => "bench$(i)@example.com") for i in 1:N]
     
         t_insert = @elapsed for payload in user_payloads
-            create(User, payload)
+            create(user, payload)
         end
         @info "100 inserts sequenciais em $(t_insert) segundos"
     
-        @test length(findMany(User)) == N
+        @test length(findMany(user)) == N
     
         t_select = @elapsed for _ in 1:N
             idx = rand(1:N)
-            findFirst(User; query=Dict("where" => Dict("email" => "bench$(idx)@example.com")))
+            findFirst(user; query=Dict("where" => Dict("email" => "bench$(idx)@example.com")))
         end
         @info "100 selects sequenciais em $(t_select) segundos"
     
-        sample = findFirst(User; query=Dict("where" => Dict("email" => "bench1@example.com")))
+        sample = findFirst(user; query=Dict("where" => Dict("email" => "bench1@example.com")))
         @test sample !== nothing && sample.email == "bench1@example.com"
     end
 
-    @testset "OrionORM Error handling" begin
-        @test_throws ErrorException update(User, Dict(), Dict("name"=>"x"))
-        @test_throws ErrorException delete(User, Dict())
+    @testset "Error handling" begin
+        @test_throws ErrorException update(user, Dict(), Dict("name"=>"x"))
+        @test_throws ErrorException delete(user, Dict())
     end
     
-    @testset "OrionORM QueryBuilder operators" begin
-        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
-        create(User, Dict("name"=>"apple","email"=>"apple@e.com"))
-        create(User, Dict("name"=>"banana","email"=>"banana@e.com"))
-        create(User, Dict("name"=>"apricot","email"=>"apricot@e.com"))
+    @testset "QueryBuilder operators" begin
+        deleteMany(user, Dict("where"=>Dict()), forceDelete=true)
+        create(user, Dict("name"=>"apple","email"=>"apple@e.com"))
+        create(user, Dict("name"=>"banana","email"=>"banana@e.com"))
+        create(user, Dict("name"=>"apricot","email"=>"apricot@e.com"))
     
-        @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("contains"=>"ap"))))) == 2
-        @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("startsWith"=>"ap"))))) == 2
-        @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("endsWith"=>"ana"))))) == 1
-        @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("in"=>["apple","banana"])))) ) == 2
-        @test length(findMany(User; query=Dict("where"=>Dict("name"=>Dict("notIn"=>["apple","banana"])))) ) == 1
-        @test length(findMany(User; query=Dict("where"=>Dict("NOT"=> Dict("name"=>"apple"))))) == 2
-        @test length(findMany(User; query=Dict("where"=>Dict("OR"=>[Dict("name"=>"apple"),Dict("name"=>"banana")])))) == 2
+        @test length(findMany(user; query=Dict("where"=>Dict("name"=>Dict("contains"=>"ap"))))) == 2
+        @test length(findMany(user; query=Dict("where"=>Dict("name"=>Dict("startsWith"=>"ap"))))) == 2
+        @test length(findMany(user; query=Dict("where"=>Dict("name"=>Dict("endsWith"=>"ana"))))) == 1
+        @test length(findMany(user; query=Dict("where"=>Dict("name"=>Dict("in"=>["apple","banana"])))) ) == 2
+        @test length(findMany(user; query=Dict("where"=>Dict("name"=>Dict("notIn"=>["apple","banana"])))) ) == 1
+        @test length(findMany(user; query=Dict("where"=>Dict("NOT"=> Dict("name"=>"apple"))))) == 2
+        @test length(findMany(user; query=Dict("where"=>Dict("OR"=>[Dict("name"=>"apple"),Dict("name"=>"banana")])))) == 2
     end
     
-    @testset "OrionORM Include edge cases" begin
-        deleteMany(Post, Dict("where"=>Dict()), forceDelete=true)
-        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
+    @testset "Include edge cases" begin
+        deleteMany(post, Dict("where"=>Dict()), forceDelete=true)
+        deleteMany(user, Dict("where"=>Dict()), forceDelete=true)
     
-        u = create(User, Dict("name"=>"nopost","email"=>"nopost@e.com"))
-        res = findMany(User; query=Dict("where"=>Dict("name"=>"nopost"), "include"=>[Post]))
+        u = create(user, Dict("name"=>"nopost","email"=>"nopost@e.com"))
+        res = findMany(user; query=Dict("where"=>Dict("name"=>"nopost"), "include"=>[post]))
         @test length(res) == 1
-        @test length(res[1]["Post"]) == 0
+        @test length(res[1]["post"]) == 0
     end
     
-    @testset "OrionORM Default timestamp" begin
-        deleteMany(Post, Dict("where"=>Dict()), forceDelete=true)
-        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
+    @testset "Default timestamp" begin
+        deleteMany(post, Dict("where"=>Dict()), forceDelete=true)
+        deleteMany(user, Dict("where"=>Dict()), forceDelete=true)
     
-        u = create(User, Dict("name"=>"u","email"=>"u@e.com"))
-        p = create(Post, Dict("title"=>"t","authorId"=>u.id))
+        u = create(user, Dict("name"=>"u","email"=>"u@e.com"))
+        p = create(post, Dict("title"=>"t","authorId"=>u.id))
         @test isa(p.createdAt, DateTime)
         @test p.createdAt > Dates.now() - Dates.Millisecond(5000)
     end
     
-    @testset "OrionORM updateMany" begin
-        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
+    @testset "updateMany" begin
+        deleteMany(user, Dict("where"=>Dict()), forceDelete=true)
         data = [Dict("name"=>"A$i","email"=>"a$(i)@e.com") for i in 1:3]
     
-        result = createMany(User, data)
+        result = createMany(user, data)
         @test result == true
-        insertedData = findMany(User; query=Dict("where"=>Dict("name"=>Dict("startsWith"=>"A"))))
+        insertedData = findMany(user; query=Dict("where"=>Dict("name"=>Dict("startsWith"=>"A"))))
         @test length(insertedData) == 3
     
-        updated = updateMany(User, Dict("where"=>Dict("name"=>"A1")), Dict("name"=>"AX"))
+        updated = updateMany(user, Dict("where"=>Dict("name"=>"A1")), Dict("name"=>"AX"))
         @test length(updated) == 1
         @test updated[1].name == "AX"
     end
     
-    @testset "OrionORM Transaction rollback" begin
-        deleteMany(User, Dict("where"=>Dict()), forceDelete=true)
-        user = create(User, Dict("name"=>"T","email"=>"t@e.com"))
+    @testset "Transaction rollback" begin
+        deleteMany(user, Dict("where"=>Dict()), forceDelete=true)
+        userSelected = create(user, Dict("name"=>"T","email"=>"t@e.com"))
     
         conn = dbConnection()
         try
             begin
                 @test_throws ErrorException DBInterface.transaction(conn) do
-                    OrionORM.executeQuery(conn, "UPDATE User SET name = ? WHERE id = ?", ["X", user.id]; useTransaction=false)
+                    OrionORM.executeQuery(conn, "UPDATE user SET name = ? WHERE id = ?", ["X", userSelected.id]; useTransaction=false)
                     error("fail")
                 end
             end
@@ -236,29 +264,29 @@ Model(
             releaseConnection(conn)
         end
     
-        found = findFirst(User; query=Dict("where"=>Dict("id"=>user.id)))
+        found = findFirst(user; query=Dict("where"=>Dict("id"=>userSelected.id)))
         @test found.name == "T"
     end
    
-    @testset "OrionORM findUnique without throw" begin
-        @test isnothing(findUnique(User, "email", "notfound@none.com")) 
+    @testset "findUnique without throw" begin
+        @test isnothing(findUnique(user, "email", "notfound@none.com")) 
     end    
 end
 
 
 # # Benchmark de INSERTs utilizando @benchmark macro com criação de dados para insert
 # insert_bench = @benchmark begin
-#     userData = Dict("name" => "Benchmark User", "email" => randstring(25) * "@example.com", "cpf" => "12345678900")
-#     create(User, userData)
+#     userData = Dict("name" => "Benchmark user", "email" => randstring(25) * "@example.com", "cpf" => "12345678900")
+#     create(user, userData)
 # end
 
 # # Benchmark createMany
 # insert_many_bench = @benchmark begin
-#     userData = [Dict("name" => "Benchmark User $(i)", "email" => "benchmark$(i)@example.com", "cpf" => "12345678900") for i in 1:100]
-#     createMany(User, userData)
+#     userData = [Dict("name" => "Benchmark user $(i)", "email" => "benchmark$(i)@example.com", "cpf" => "12345678900") for i in 1:100]
+#     createMany(user, userData)
 # end
 
 # # Benchmark de SELECTs utilizando @benchmark macro
 # select_bench = @benchmark begin
-#     findFirst(User; query=Dict("where" => Dict("email" => "benchmark@example.com")))
+#     findFirst(user; query=Dict("where" => Dict("email" => "benchmark@example.com")))
 # end

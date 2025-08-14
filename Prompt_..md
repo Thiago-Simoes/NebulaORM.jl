@@ -64,7 +64,7 @@ end
 
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,
-       Model, generateUuid,
+       Model, generateUUID,
        findMany, findFirst, findFirstOrThrow, findUnique, findUniqueOrThrow,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
@@ -296,7 +296,7 @@ function create(model::DataType, data::Dict{<:AbstractString,Any})
         if occursin("VARCHAR(36)" ,col.type) &&
            "UUID" in uppercase(join(col.constraints," ")) &&
            !haskey(filtered,col.name)
-            filtered[col.name] = generateUuid()
+            filtered[col.name] = generateUUID()
         end
     end
 
@@ -780,7 +780,7 @@ function serialize(instance)
 end
 
 
-function generateUuid()
+function generateUUID()
     return string(uuid4())
 end
 

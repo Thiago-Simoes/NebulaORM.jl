@@ -18,6 +18,8 @@ include("./relationships.jl")
 include("./querybuilder.jl")
 include("./crud.jl")
 
+include("./instrospection.jl")
+
 
 # ---------------------------
 # Global registry for associating model metadata (using the model name as key)
@@ -40,11 +42,12 @@ end
 
 
 export dbConnection, createTableDefinition, migrate!, dropTable!,
-       Model, generateUuid, executeQuery, releaseConnection,
+       Model, generateUUID, executeQuery, releaseConnection,
        findMany, findFirst, findFirstOrThrow, findUnique, findUniqueOrThrow,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
-       VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, INTEGER, UUID, DATE, TIMESTAMP, JSON, PrimaryKey, AutoIncrement, NotNull, Unique, Default
+       VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, INTEGER, UUID, DATE, TIMESTAMP, JSON, PrimaryKey, AutoIncrement, NotNull, Unique, Default,
+       generateModels, resetORM!
 
 
 end  # module ORM

@@ -51,9 +51,8 @@ function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params:
         if is_sel
             return DataFrame(result)
         elseif startswith(uppercase(strip(sql)), "INSERT") || startswith(uppercase(strip(sql)), "UPDATE") || startswith(uppercase(strip(sql)), "DELETE")
-            isa(result, Bool) && return result  # se for um booleano, retorna ele
+            isa(result, Bool) && return result
             return result.rows_affected
-            # ERROR: MethodError: no method matching Bool(::MySQL.Cursor{true})
         elseif isa(result, MySQL.Cursor)
             return true
         else
@@ -74,7 +73,7 @@ function executeQuery(sql::AbstractString, params::Vector{<:Any}=Any[]; useTrans
 end
 
 
-function dropTable!(conn::DBInterface.Connection, tableName::String)
+function dropTable!(conn::DBInterface.Connection, tableName::String)::Nothing
     try
         sql = "DROP TABLE IF EXISTS `$tableName`"
         DBInterface.execute(conn, sql)
@@ -129,8 +128,8 @@ function findFirst(model::DataType; query::AbstractDict = Dict())
     end
 
     try
-        b = buildSelectQuery(resolved, qdict)    # NamedTuple(sql, params)
-        df = executeQuery(b.sql, b.params)   # já retorna DataFrame
+        b = buildSelectQuery(resolved, qdict)
+        df = executeQuery(b.sql, b.params)
 
         isempty(df) && return nothing
         
@@ -217,7 +216,7 @@ function create(model::DataType, data::Dict{<:AbstractString,<:Any})
 
     for col in meta.columns
         if isUUIDColumn(col) && !haskey(filtered, col.name)
-            filtered[col.name] = generateUuid()
+            filtered[col.name] = generateUUID()
         end
     end
 
@@ -307,14 +306,41 @@ Generates a single INSERT statement with placeholders for multiple records,
 returning (sql, params) suitable for prepared execution.
 """
 function buildBatchInsertQuery(model::DataType, records::AbstractVector)
-    meta     = modelConfig(model)
-    colsList = [c.name for c in meta.columns if c.name != "id"]
-    cols = join(["`$(c)`" for c in colsList], ", ")
+    isempty(records) && error("records não pode ser vazio")
+
+    meta = modelConfig(model)
+    colsByName = Dict(c.name => c for c in meta.columns)
+
+    # pula PK se auto-increment
+    pk = getPrimaryKeyColumn(model)
+    skip = Set{String}()
+    if pk !== nothing
+        hasAutoInc = any(occursin.("AUTO_INCREMENT", uppercase.(pk.constraints)))
+        hasAutoInc && push!(skip, pk.name)
+    end
+
+    colsList = [c.name for c in meta.columns if !(c.name in skip)]
+    colsSql  = join(["`$c`" for c in colsList], ", ")
     rowCount = length(records)
     singleRowPh = "(" * join(fill("?", length(colsList)), ",") * ")"
     allPh = join(fill(singleRowPh, rowCount), ",")
-    sql = "INSERT INTO $(meta.name) ($cols) VALUES $allPh"
-    params = reduce(vcat, [ [r[c] for c in colsList] for r in records ])
+
+    params = Any[]
+    for rec in records
+        getv(k) = haskey(rec, k)              ? rec[k] :
+                  haskey(rec, Symbol(k))      ? rec[Symbol(k)] :
+                  nothing
+        for cname in colsList
+            col = colsByName[cname]
+            v = getv(cname)
+            if v === nothing && isUUIDColumn(col)
+                v = generateUUID()
+            end
+            push!(params, v)
+        end
+    end
+
+    sql = "INSERT INTO $(meta.name) ($colsSql) VALUES $allPh"
     return (sql=sql, params=params)
 end
 

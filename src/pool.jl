@@ -8,6 +8,11 @@ using DotEnv
 const POOL_SIZE = get(ENV, "POOL_SIZE", "5") |> x -> parse(Int, x)
 const connection_pool = Channel{MySQL.Connection}(POOL_SIZE)
 
+function __init__()
+    DotEnv.load!() 
+    init_pool()
+end
+
 # Cria uma nova conexão
 function create_connection()
     dbHost     = ENV["DB_HOST"]

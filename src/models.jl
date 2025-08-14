@@ -50,18 +50,16 @@ end
 # --- Migração idempotente de esquema, índices e FKs ---
 function migrate!(conn::DBInterface.Connection, meta::Model)
     tbl = meta.name
-    # 1) Cria tabela se não existir
     if !table_exists(conn, tbl)
         schema = createTableDefinition(meta)
         executeQuery(conn, "CREATE TABLE $tbl ($schema)", [];
                      useTransaction=false)
     end
 
-    # 2) Índices
     for cols in get(indexesRegistry, Symbol(tbl), [])
         idx_name = "idx_$(tbl)_$(join(cols, "_"))"
         if !index_exists(conn, tbl, idx_name)
-            sql = "CREATE INDEX $idx_name ON $tbl ($(join(cols, ",")))"
+            sql = "CREATE INDEX `$idx_name` ON `$tbl` (`$(join(cols, "`, `"))`)"
             executeQuery(conn, sql, [];
                          useTransaction=false)
         end
@@ -71,12 +69,13 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
     for rel in get(relationshipsRegistry, Symbol(tbl), Relationship[])
         fk_name = "fk_$(tbl)_$(rel.field)"
         if !constraint_exists(conn, tbl, fk_name)
+            sql = nothing
             if rel.type == :belongsTo
                 ref_tbl = modelConfig(resolveModel(rel.targetModel)).name
-                sql = "ALTER TABLE $tbl ADD CONSTRAINT $fk_name FOREIGN KEY ($(rel.field)) REFERENCES $ref_tbl($(rel.targetField)) ON DELETE CASCADE ON UPDATE CASCADE"
+                sql = "ALTER TABLE `$tbl` ADD CONSTRAINT `$fk_name` FOREIGN KEY (`$(rel.field)`) REFERENCES `$ref_tbl`(`$(rel.targetField)`) ON DELETE CASCADE ON UPDATE CASCADE"
             else
                 tgt = modelConfig(resolveModel(rel.targetModel)).name
-                sql = "ALTER TABLE $tgt ADD CONSTRAINT $fk_name FOREIGN KEY ($(rel.targetField)) REFERENCES $tbl($(rel.field)) ON DELETE CASCADE ON UPDATE CASCADE"
+                sql = "ALTER TABLE `$tgt` ADD CONSTRAINT `$fk_name` FOREIGN KEY (`$(rel.targetField)`) REFERENCES `$tbl`(`$(rel.field)`) ON DELETE CASCADE ON UPDATE CASCADE"
             end
             executeQuery(conn, sql, [];
                          useTransaction=false)
@@ -96,7 +95,7 @@ registrando relacionamentos e índices em registries, e executando migração id
 function Model(modelName::Symbol,
                columnsDef::Vector,
                relationshipsDef::Vector = [],
-               indexesDef::Vector{} = [] )
+               indexesDef::Vector{<:Vector} = Vector{Vector{String}}())
 
     # 1) Monta campos do struct com tipos Julia
     field_exprs = Expr[]
@@ -209,22 +208,24 @@ function instantiate(model::DataType, record::Union{DataFrame, DataFrameRow})
     for (i, col) in enumerate(meta.columns)
         value = record[i]
         if ismissing(value)
-            if col.type == "INTEGER"
-                push!(args, 0)
-            elseif col.type in ["FLOAT", "DOUBLE"]
-                push!(args, 0.0)
-            elseif col.type == "VARCHAR(36)" || col.type == "TEXT" || col.type == "JSON"
-                push!(args, "")
-            elseif col.type == "DATE"
-                push!(args, Date("1900-01-01"))
-            elseif col.type == "TIMESTAMP"
-                push!(args, DateTime("1900-01-01T00:00:00"))
-            else
-                push!(args, nothing)
-            end
+            jt = mapSqlTypeToJulia(col.type)
+            push!(args, jt === Int ? 0 :
+                        jt === Float64 ? 0.0 :
+                        jt === String ? "" :
+                        jt === Dates.Date ? Date(0) :
+                        jt === Dates.DateTime ? DateTime(0) :
+                        nothing)
         else
             push!(args, value)
-        end
+        end        
     end
     return model(args...)
+end
+
+
+function resetORM!()
+    if @isdefined modelRegistry;           empty!(modelRegistry);           end
+    if @isdefined relationshipsRegistry;   empty!(relationshipsRegistry);   end
+    if @isdefined indexesRegistry;         empty!(indexesRegistry);         end
+    if @isdefined __ORM_MODELS__;          empty!(__ORM_MODELS__);          end
 end

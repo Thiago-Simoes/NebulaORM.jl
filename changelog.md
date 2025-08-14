@@ -161,6 +161,6 @@ OrionORM                       |   28     28  8.0s
 - **Model Conversion and Instantiation**
   - Conversion of query results into model instances.
 - **UUID Generation**
-  - `generateUuid` function to create unique identifiers.
+  - `generateUUID` function to create unique identifiers.
 - **Prepared Statements**
   - Implemented prepared statements to enhance security and prevent SQL injection.

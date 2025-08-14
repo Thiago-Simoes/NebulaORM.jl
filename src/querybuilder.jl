@@ -127,15 +127,29 @@ function _build_select(baseTable::String, query)::String
 end
 
 # === ORDER ===============================================================
-function _build_order(order, table)::String
-    if order isa String
-        return order
-    elseif order isa Dict
-        (col, dir) = first(order)
-        dir = uppercase(string(dir)) in ("ASC","DESC") ? string(dir) : "ASC"
-        return "$(qualifyColumn(table, string(col))) $dir"
+function _order_fragment(model::DataType, pair)::String
+    (col, dir) = first(pair)
+    meta = modelConfig(model)
+    allowed = Set(c.name for c in meta.columns)
+    scol = string(col)
+    scol in allowed || error("orderBy: coluna inválida '$scol'")
+    sdir = uppercase(string(dir)) in ("ASC","DESC") ? uppercase(string(dir)) : "ASC"
+    return "`$(meta.name)`.`$scol` $sdir"
+end
+
+function _build_order(order, model::DataType)::String
+    if order isa Dict
+        return _order_fragment(model, order)
+    elseif order isa Vector
+        isempty(order) && error("orderBy: empty vector is not allowed")
+        parts = String[]
+        for o in order
+            o isa Dict || error("orderBy: each element must be a Dict")
+            push!(parts, _order_fragment(model, o))
+        end
+        return join(parts, ", ")
     else
-        error("orderBy deve ser String ou Dict")
+        error("orderBy must be a Dict or a Vector{Dict}; ex: [Dict(\"name\"=>\"asc\"), Dict(\"id\"=>\"desc\")]")
     end
 end
 
@@ -202,7 +216,7 @@ function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:param
     end
 
     # ORDER / LIMIT / OFFSET
-    if haskey(query,"orderBy"); sql *= " ORDER BY " * _build_order(query["orderBy"], baseTable) end
+    if haskey(query,"orderBy"); sql *= " ORDER BY " * _build_order(query["orderBy"], model) end
     if haskey(query,"limit");   sql *= " LIMIT ?" ; push!(params, query["limit"])    end
     if haskey(query,"offset");  sql *= " OFFSET ?" ; push!(params, query["offset"])  end
 
@@ -248,7 +262,7 @@ function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, q
         push!(assigns, "`$k` = ?")
         push!(params, v)
     end
-    # reaproveita o _build_where para o WHERE
+
     tbl   = meta.name
     w = _build_where(query, tbl)
     sql   = "UPDATE $tbl SET " * join(assigns, ", ") * " WHERE " * w.clause

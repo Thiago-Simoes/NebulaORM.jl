@@ -6,23 +6,23 @@ function CHAR(size::Integer)::String
     return "CHAR($size)"
 end
 
-function VARCHAR(size)
+function VARCHAR(size)::String
     return "VARCHAR($(size))"
 end
 
-function TEXT()
+function TEXT()::String
     return :( "TEXT" )
 end
 
-function INTEGER()
+function INTEGER()::String
     return :( "INTEGER" )
 end
 
-function DOUBLE()
+function DOUBLE()::String
     return :( "DOUBLE" )
 end
 
-function FLOAT()
+function FLOAT()::String
     return :( "FLOAT" )
 end
 
@@ -30,7 +30,7 @@ function DECIMAL(precision::Integer, scale::Integer)::String
     return "DECIMAL($precision,$scale)"
 end
 
-function BOOLEAN()
+function BOOLEAN()::String
     return :( "BOOLEAN" )
 end
 
@@ -50,19 +50,19 @@ function SET(values::Vector{<:AbstractString})::String
     end
 end
 
-function UUID()
+function UUID()::String
     return :( "VARCHAR(36)" )
 end
 
-function DATE()
+function DATE()::String
     return :( "DATE" )
 end
 
-function TIMESTAMP()
+function TIMESTAMP()::String
     return :( "TIMESTAMP" )
 end
 
-function JSON()
+function JSON()::String
     return :( "JSON" )
 end
 
@@ -94,22 +94,24 @@ end
 # ---------------------------
 # ---------------------------
 function mapSqlTypeToJulia(sqlType::String)
-    sqlType = uppercase(sqlType)
-    if sqlType == "INTEGER"
-        return Int
-    elseif sqlType in ["FLOAT", "DOUBLE"]
-        return Float64
-    elseif sqlType == "TEXT"
-        return String
-    elseif sqlType == "TIMESTAMP"
-        return Dates.DateTime
-    elseif sqlType == "DATE"
-        return Dates.Date
-    elseif sqlType == "JSON"
-        return String
-    elseif sqlType == "UUID"
-        return String
+    s = uppercase(sqlType)
+    if s == "INTEGER" || startswith(s, "INT")
+        Int
+    elseif s in ("FLOAT","DOUBLE") || startswith(s, "DOUBLE") || startswith(s, "FLOAT")
+        Float64
+    elseif startswith(s, "DECIMAL")
+        Float64  # ou FixedPointNumbers/Decimal se quiser precisão
+    elseif s == "TEXT" || startswith(s, "VARCHAR") || startswith(s, "CHAR") || startswith(s, "ENUM") || startswith(s, "SET")
+        String
+    elseif s == "TIMESTAMP"
+        Dates.DateTime
+    elseif s == "DATE"
+        Dates.Date
+    elseif s == "JSON"
+        String  # futuro: JSON3.Object
+    elseif s == "BOOLEAN" || startswith(s, "TINYINT(1)")
+        Bool
     else
-        return Any
+        Any
     end
 end
