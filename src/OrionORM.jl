@@ -20,6 +20,7 @@ include("./crud.jl")
 
 include("./instrospection.jl")
 
+include("./telemetry.jl")
 
 # ---------------------------
 # Global registry for associating model metadata (using the model name as key)
@@ -47,7 +48,7 @@ export dbConnection, createTableDefinition, migrate!, dropTable!,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
        VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, INTEGER, UUID, DATE, TIMESTAMP, JSON, PrimaryKey, AutoIncrement, NotNull, Unique, Default,
-       generateModels, resetORM!
+       generateModels, resetORM!, setOnQuery!, clearOnQuery!
 
 
 end  # module ORM

@@ -37,6 +37,13 @@ function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params:
     stmt = DBInterface.prepare(conn, sql)
     try
         is_sel = startswith(uppercase(strip(sql)), "SELECT")
+
+        try
+            OrionORM.onQueryHook[](sql, params, (isSelect=is_sel, useTransaction=useTransaction))
+        catch hookErr
+            @warn "onQueryHook failed" exception=(hookErr,)
+        end
+
         result = if is_sel
             DBInterface.execute(stmt, params)
         else

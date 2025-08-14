@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.5.5] - 2025-08-14
+### Added
+- Improved telemetry, implementing `onQueryHook`.
+
+## [0.5.4] - 2025-08-13
+### Performance
+- **Production-ready eager loading**:
+  - Implemented **chunked IN batching** to prevent oversized queries.
+  - Enforced **default pagination** in `findMany` to avoid unbounded result sets.
+  - Automatically create **indexes for foreign keys** during migrations.
+  - Maintained API compatibility with existing `include` behavior.
+
+## [0.5.3] - 2025-08-13
+### Added
+- **Batch Insert**: support for high-performance bulk inserts.
+- **Schema Introspection**: ability to read and import database schema directly.
+- **Type System Improvements**: enhanced type checking and support for more data types.
+- **Ordering System**: fixed and stabilized ordering logic.
+- **Keys and Constraints**: fixed handling of defaults, keys, and constraints.
+- **Index Definitions and Relationships**: implemented index definitions with full database relationship integration.
+- **Tests**: updated tests to create schema via SQL and import it using introspection.
+
+### Fixed
+- `forceDelete` now prevents accidental deletion of all rows in a table.
+
 ## [0.5.2] - 2025-08-06
 ### Fixed
 - Refactor buildJoinClause: now uses the new qualifyColumn helper to automatically wrap table and column names in backticks and fully qualify them in all JOIN conditions, eliminating ambiguous-column errors and keeping the code clean and consistent.
