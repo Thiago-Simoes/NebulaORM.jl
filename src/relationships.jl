@@ -19,7 +19,6 @@ function hasMany(parentInstance, relationName)
     error("No hasMany relationship found with name $relationName for model $(parentType)")
 end
 
-# Overload para hasMany com 3 parâmetros
 function hasMany(parentInstance, relatedModel::DataType, foreignKey::String)
     local parentType = typeof(parentInstance)
     local pkCol = getPrimaryKeyColumn(parentType)
@@ -30,7 +29,6 @@ function hasMany(parentInstance, relatedModel::DataType, foreignKey::String)
     return findMany(relatedModel; query=Dict("where" => Dict(foreignKey => parentValue)))
 end
 
-# Versão registrada para belongsTo
 function belongsTo(childInstance, relationName)
     childType = typeof(childInstance)
     relationships = getRelationships(childType)

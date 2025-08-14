@@ -84,6 +84,82 @@ function dropTable!(conn::DBInterface.Connection, tableName::String)::Nothing
     end
 end
 
+
+_chunk(vec, n) = (vec[i:min(i+n-1, length(vec))] for i in 1:n:length(vec))
+
+function _eagerLoadIncludes(conn::DBInterface.Connection,
+                            rootModel::DataType,
+                            recs::Vector,
+                            includes;
+                            inChunkSize::Int=1000) 
+    isempty(recs) && return Vector{Dict{String,Any}}()
+
+    pkcol = getPrimaryKeyColumn(rootModel)  !== nothing ? getPrimaryKeyColumn(rootModel) : error("No PK")
+    parentIds = [getfield(r, Symbol(pkcol.name)) for r in recs]
+
+    out = [Dict{String,Any}(string(rootModel)=>recs[i]) for i in eachindex(recs)]
+
+    for inc in includes
+        incModel = isa(inc,String) ? Base.eval(@__MODULE__, Symbol(inc)) : inc
+        rel = nothing
+        for r in getRelationships(rootModel)
+            if resolveModel(r.targetModel) === incModel
+                rel = r; break
+            end
+        end
+        isnothing(rel) && error("No relationship from $(rootModel) to $(incModel)")
+        tgtModel = resolveModel(rel.targetModel)
+
+        if rel.type in (:hasMany, :hasOne)
+            by_fk = Dict{Any, Vector{Any}}()
+
+            for chunkIds in _chunk(parentIds, inChunkSize)
+                isempty(chunkIds) && continue
+                b = buildSelectQuery(tgtModel, Dict("where"=>Dict(rel.targetField=>Dict("in"=>chunkIds))))
+                df = executeQuery(conn, b.sql, b.params; useTransaction=false)
+                colSym = Symbol(rel.targetField)
+                for row in eachrow(df)
+                    fk = row[colSym]
+                    push!(get!(by_fk, fk, Any[]), instantiate(tgtModel, row))
+                end
+            end
+
+            is_many = (rel.type == :hasMany)
+            for (i, rec) in enumerate(recs)
+                key  = getfield(rec, Symbol(pkcol.name))
+                vals = get(by_fk, key, Any[])
+                out[i][string(tgtModel)] = is_many ? vals :
+                                           (isempty(vals) ? nothing : first(vals))
+            end
+
+        elseif rel.type == :belongsTo
+            fks = [getfield(r, Symbol(rel.field)) for r in recs]
+            fks_clean = unique!(filter(x -> !ismissing(x) && x !== nothing, copy(fks)))
+
+            by_pk = Dict{Any, Any}()
+            for chunkFKs in _chunk(fks_clean, inChunkSize)
+                isempty(chunkFKs) && continue
+                b = buildSelectQuery(tgtModel, Dict("where"=>Dict(rel.targetField=>Dict("in"=>chunkFKs))))
+                df = executeQuery(conn, b.sql, b.params; useTransaction=false)
+                pkSym = Symbol(rel.targetField)
+                for row in eachrow(df)
+                    by_pk[row[pkSym]] = instantiate(tgtModel, row)
+                end
+            end
+
+            for (i, rec) in enumerate(recs)
+                fk = getfield(rec, Symbol(rel.field))
+                out[i][string(tgtModel)] = get(by_pk, fk, nothing)
+            end
+        else
+            error("Unknown relationship type $(rel.type)")
+        end
+    end
+
+    return out
+end
+
+
 function findMany(model::DataType; query::AbstractDict=Dict())
     qdict    = normalizeQuery(query)
     resolved = resolveModel(model)
@@ -92,32 +168,17 @@ function findMany(model::DataType; query::AbstractDict=Dict())
         b    = buildSelectQuery(resolved, qdict)
         df   = executeQuery(conn, b.sql, b.params)
         recs = [instantiate(resolved, row) for row in eachrow(df)]
+
         if haskey(qdict, "include")
-            out = Vector{Dict{String,Any}}()
-            for rec in recs
-                m = Dict{String,Any}(string(resolved)=>rec)
-                for inc in qdict["include"]
-                    incModel = isa(inc,String) ? Base.eval(@__MODULE__, Symbol(inc)) : inc
-                    for rel in getRelationships(resolved)
-                        if resolveModel(rel.targetModel) === incModel
-                            val = rel.type == :hasMany    ? hasMany(rec, rel.field)    :
-                                  rel.type == :hasOne    ? hasOne(rec, rel.field)     :
-                                  rel.type == :belongsTo ? belongsTo(rec, rel.field)  :
-                                                           nothing
-                            m[string(incModel)] = val
-                            break
-                        end
-                    end
-                end
-                push!(out, m)
-            end
-            return out
+            return _eagerLoadIncludes(conn, resolved, recs, qdict["include"])
         end
+
         return recs
     finally
         releaseConnection(conn)
     end
 end
+
 
 function findFirst(model::DataType; query::AbstractDict = Dict())
     qdict    = normalizeQuery(query)
@@ -127,42 +188,25 @@ function findFirst(model::DataType; query::AbstractDict = Dict())
         qdict["limit"] = 1
     end
 
+    conn = dbConnection()
     try
-        b = buildSelectQuery(resolved, qdict)
-        df = executeQuery(b.sql, b.params)
+        b  = buildSelectQuery(resolved, qdict)
+        df = executeQuery(conn, b.sql, b.params)
 
         isempty(df) && return nothing
-        
+
         record = instantiate(resolved, df[1, :])
 
         if haskey(qdict, "include")
-            result = Dict{String,Any}()
-            result[string(resolved)] = record
-
-            for included in qdict["include"]
-                includedModel = isa(included, String) ? Base.eval(@__MODULE__, Symbol(included)) : included
-
-                for rel in getRelationships(resolved)
-                    if resolveModel(rel.targetModel) === includedModel
-                        related = nothing
-                        if rel.type == :hasMany
-                            related = hasMany(record, rel.field)
-                        elseif rel.type == :hasOne
-                            related = hasOne(record, rel.field)
-                        elseif rel.type == :belongsTo
-                            related = belongsTo(record, rel.field)
-                        end
-                        result[string(includedModel)] = related
-                        break
-                    end
-                end
-            end
-
-            return result
+            loaded = _eagerLoadIncludes(conn, resolved, [record], qdict["include"])
+            return loaded[1]
         end
+
         return record
     catch e
         rethrow(e)
+    finally
+        releaseConnection(conn)
     end
 end
 
