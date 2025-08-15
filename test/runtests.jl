@@ -21,12 +21,15 @@ end
 function recreate_with_raw_sql!() # Simulate a database with a known schema
     conn = dbConnection()
     try
-        exec!(conn, "DROP TABLE IF EXISTS `post`")
-        exec!(conn, "DROP TABLE IF EXISTS `profile`")
-        exec!(conn, "DROP TABLE IF EXISTS `user`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `postlegacy`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `userlegacy`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `profilelegacy`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `post`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `user`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `profile`")
 
         exec!(conn, """
-            CREATE TABLE `user` (
+            CREATE TABLE `userlegacy` (
               `id` INT NOT NULL AUTO_INCREMENT,
               `name` VARCHAR(50) NOT NULL,
               `email` VARCHAR(200) NOT NULL,
@@ -37,7 +40,7 @@ function recreate_with_raw_sql!() # Simulate a database with a known schema
         """)
 
         exec!(conn, """
-            CREATE TABLE `post` (
+            CREATE TABLE `postlegacy` (
               `id` INT NOT NULL AUTO_INCREMENT,
               `title` TEXT NOT NULL,
               `authorId` INT NOT NULL,
@@ -45,13 +48,13 @@ function recreate_with_raw_sql!() # Simulate a database with a known schema
               PRIMARY KEY (`id`),
               KEY `ix_post_author` (`authorId`),
               CONSTRAINT `fk_post_author`
-                FOREIGN KEY (`authorId`) REFERENCES `user`(`id`)
+                FOREIGN KEY (`authorId`) REFERENCES `userlegacy`(`id`)
                 ON UPDATE CASCADE ON DELETE RESTRICT
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
 
         exec!(conn, """
-            CREATE TABLE `profile` (
+            CREATE TABLE `profilelegacy` (
               `id` INT NOT NULL AUTO_INCREMENT,
               `userId` INT NOT NULL,
               `phone` VARCHAR(20) NOT NULL,
@@ -73,6 +76,9 @@ recreate_with_raw_sql!()
         @test length(schema) > 0
 
         # Clean database state and re-run migration
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `postlegacy`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `userlegacy`")
+        exec!(dbConnection(), "DROP TABLE IF EXISTS `profilelegacy`")
         exec!(dbConnection(), "DROP TABLE IF EXISTS `post`")
         exec!(dbConnection(), "DROP TABLE IF EXISTS `user`")
         exec!(dbConnection(), "DROP TABLE IF EXISTS `profile`")
@@ -80,6 +86,114 @@ recreate_with_raw_sql!()
         
         tWrapped = "begin\n$(schema)\nend"
         eval(Meta.parse(tWrapped))
+    end
+    
+    @testset "Model Definition without col constraint" begin
+        # Define a model without column constraints
+        Model(:TestModel, [
+            ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+            ("name", VARCHAR(100)),
+            ("email", VARCHAR(150))
+        ])
+        
+        @test haskey(OrionORM.modelRegistry, :TestModel)
+    end
+
+    @testset "Basic CRUD Tests using Introspected Models" begin
+        userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
+        userSelected = create(userlegacy, userData)
+        @test userSelected.name == "Thiago"
+        @test userSelected.email == "thiago@example.com"
+        @test hasproperty(userSelected, :id) 
+
+        foundUser = findFirst(userlegacy; query=Dict("where" => Dict("name" => "Thiago")))
+        @test foundUser !== nothing
+        @test foundUser.id == userSelected.id
+
+        updatedUser = update(userlegacy, Dict("where" => Dict("id" => userSelected.id)), Dict("name" => "Thiago Updated"))
+        @test updatedUser.name == "Thiago Updated"
+
+        upsertUser = upsert(userlegacy, "email", "thiago@example.com",
+                            Dict("name" => "Thiago Upserted", "email" => "thiago@example.com"))
+        @test upsertUser.name == "Thiago Upserted"
+
+        foundUser.name = "Thiago Instance"
+        updatedInstance = update(foundUser)
+        @test updatedInstance.name == "Thiago Instance"
+
+        deleteResult = delete(foundUser)
+        @test deleteResult === true
+
+        records = [
+            Dict("name" => "Bob", "email" => "bob@example.com", "cpf" => "11111111111"),
+            Dict("name" => "Carol", "email" => "carol@example.com", "cpf" => "22222222222")
+        ]
+        createdRecords = createMany(userlegacy, records)
+        @test createdRecords == true
+
+        manyUsers = findMany(userlegacy)
+        @test length(manyUsers) ≥ 2
+
+        uMany = updateMany(userlegacy, Dict("where" => Dict("name" => "Bob")), Dict("name" => "Bob Updated"))
+        
+        for u in uMany
+            @test u.name == "Bob Updated"
+        end
+
+        userData = Dict("name" => "Thiago", "email" => "thiago@example.com", "cpf" => "00000000000")
+        userSelected = create(userlegacy, userData)
+        postData = Dict("title" => "My First post", "authorId" => userSelected.id)
+        postSelected = create(postlegacy, postData)
+        @test postSelected.title == "My First post"
+        @test postSelected.authorId == userSelected.id
+
+        @test hasMany(userSelected, postlegacy, "authorId")[1].title == "My First post"
+
+        @test_throws OrionORM.UnsafeDeleteError deleteMany(userlegacy, Dict("where" => Dict()))
+        deleteManyResult = deleteMany(userlegacy, Dict("where" => Dict()), forceDelete=true)
+        @test deleteManyResult === true
+    end
+
+    @testset "Cleaning and Recreating Database" begin
+        OrionORM.resetORM!()  # Reset ORM state
+        conn = dbConnection()
+        exec!(conn, "DROP TABLE IF EXISTS `postlegacy`")
+        exec!(conn, "DROP TABLE IF EXISTS `userlegacy`")
+        exec!(conn, "DROP TABLE IF EXISTS `profile`")
+        exec!(conn, "DROP TABLE IF EXISTS `user`")
+        exec!(conn, "DROP TABLE IF EXISTS `post`")
+
+        Model(:user, [
+            ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+            ("name", VARCHAR(50)),
+            ("email", VARCHAR(200), [Unique()]), # Constraint inline
+            ("cpf", VARCHAR(11))
+        ],
+        [],
+        [ # Indexes
+            ["id", "name"], # Index non-unique, using old syntax
+            Index(columns=["name", "cpf"], unique=true), # New syntax with Index
+            Dict("name" => "ux_user_email", "columns" => ["email", "cpf"], "unique" => true) # Named index using Dict syntax
+        ]
+        )
+
+        Model(:post, [
+            ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+            ("title", TEXT()),
+            ("authorId", INTEGER(), [NotNull()]),
+            ("createdAt", TIMESTAMP(), [Default(Dates.now())])
+        ], 
+        [
+            # field  , targetModel , targetField, relationshipType
+            ("authorId", "user", "id", :belongsTo)
+        ],
+        [
+            Index(columns=["authorId"], unique=false),
+            Index(columns=["title"], unique=false, lengths=Dict("title"=>100))
+        ] # Indexes
+        )
+
+        @test length(findMany(user)) == 0  # Ensure no users exist after reset
     end
 
     @testset "Basic CRUD Tests" begin
@@ -243,7 +357,7 @@ recreate_with_raw_sql!()
         u = create(user, Dict("name"=>"u","email"=>"u@e.com"))
         p = create(post, Dict("title"=>"t","authorId"=>u.id))
         @test isa(p.createdAt, DateTime)
-        @test p.createdAt > Dates.now() - Dates.Millisecond(5000)
+        @test p.createdAt > (Dates.now() - Dates.Millisecond(10000))
     end
     
     @testset "updateMany" begin

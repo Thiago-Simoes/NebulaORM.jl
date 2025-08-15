@@ -50,7 +50,7 @@ export dbConnection, createTableDefinition, migrate!, dropTable!,
        create, update, upsert, delete, createMany, createManyAndReturn,
        updateMany, updateManyAndReturn, deleteMany, hasMany, belongsTo, hasOne,
        VARCHAR, TEXT, NUMBER, DOUBLE, FLOAT, INTEGER, UUID, DATE, TIMESTAMP, JSON, PrimaryKey, AutoIncrement, NotNull, Unique, Default,
-       generateModels, resetORM!, setOnQuery!, clearOnQuery!
+       generateModels, resetORM!, setOnQuery!, clearOnQuery!, Index
 
 
 end  # module ORM

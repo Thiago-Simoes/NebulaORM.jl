@@ -38,6 +38,18 @@ function index_exists(conn::DBInterface.Connection, table_name::String, index_na
     return df.cnt[1] > 0
 end
 
+function unique_constraint_exists(conn::DBInterface.Connection, table_name::String, constraint_name::String)::Bool
+    df = executeQuery(conn, """
+        SELECT COUNT(*) AS cnt
+          FROM information_schema.table_constraints
+         WHERE constraint_schema = DATABASE()
+           AND table_name        = ?
+           AND constraint_name   = ?
+           AND constraint_type   = 'UNIQUE'""", [table_name, constraint_name]; useTransaction=false)
+    return df.cnt[1] > 0
+end
+
+
 function constraint_exists(conn::DBInterface.Connection, table_name::String, constraint_name::String)::Bool
     df = executeQuery(conn, """
         SELECT COUNT(*) AS cnt
@@ -48,6 +60,19 @@ function constraint_exists(conn::DBInterface.Connection, table_name::String, con
     return df.cnt[1] > 0
 end
 
+function _index_cols_sql(tbl::String, idx::Index)
+    parts = String[]
+    for c in idx.columns
+        if haskey(idx.lengths, c)
+            push!(parts, "`$c`($(idx.lengths[c]))")
+        else
+            push!(parts, "`$c`")
+        end
+    end
+    return join(parts, ", ")
+end
+
+
 # --- Migração idempotente de esquema, índices e FKs ---
 function migrate!(conn::DBInterface.Connection, meta::Model)
     tbl = meta.name
@@ -57,12 +82,43 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
                      useTransaction=false)
     end
 
-    for cols in get(indexesRegistry, Symbol(tbl), [])
-        idx_name = "idx_$(tbl)_$(join(cols, "_"))"
-        if !index_exists(conn, tbl, idx_name)
-            sql = "CREATE INDEX `$idx_name` ON `$tbl` (`$(join(cols, "`, `"))`)"
-            executeQuery(conn, sql, [];
-                         useTransaction=false)
+    idxdefs = get(indexesRegistry, Symbol(tbl), Any[])
+
+    for raw in idxdefs
+        # Back-compat: se vier Vector{String} => índice normal
+        idx = if raw isa Vector{String}
+            Index(columns=raw)
+        elseif raw isa Dict
+            # esperado: Dict("columns"=>["a","b"], "unique"=>true, "name"=>"uq_x", "lengths"=>Dict("a"=>191))
+            cols    = Vector{String}(raw["columns"])
+            uniq    = get(raw, "unique", false)
+            iname   = get(raw, "name", nothing)
+            ilength = haskey(raw, "lengths") ? Dict{String,Int}(raw["lengths"]) : Dict{String,Int}()
+            Index(name=iname, columns=cols, unique=uniq, lengths=ilength)
+        elseif raw isa Index
+            raw
+        else
+            error("Unsupported index def: $(typeof(raw))")
+        end
+
+        # nome padrão determinístico
+        base = idx.unique ? "uq" : "idx"
+        iname = isnothing(idx.name) ? "$(base)_$(tbl)_$(join(idx.columns, "_"))" : idx.name
+
+        if idx.unique
+            # criar como CONSTRAINT UNIQUE (idempotente via information_schema.table_constraints)
+            if !unique_constraint_exists(conn, tbl, iname)
+                cols_sql = _index_cols_sql(tbl, idx)
+                sql = "ALTER TABLE `$tbl` ADD CONSTRAINT `$iname` UNIQUE ($cols_sql)"
+                executeQuery(conn, sql, []; useTransaction=false)
+            end
+        else
+            # índice normal (idempotente via information_schema.statistics)
+            if !index_exists(conn, tbl, iname)
+                cols_sql = _index_cols_sql(tbl, idx)
+                sql = "CREATE INDEX `$iname` ON `$tbl` ($cols_sql)"
+                executeQuery(conn, sql, []; useTransaction=false)
+            end
         end
     end
 
@@ -96,16 +152,19 @@ registrando relacionamentos e índices em registries, e executando migração id
 function Model(modelName::Symbol,
                columnsDef::Vector,
                relationshipsDef::Vector = [],
-               indexesDef::Vector{<:Vector} = Vector{Vector{String}}())
+               indexesDef::Vector = Vector{Any}())
 
     # 1) Monta campos do struct com tipos Julia
     field_exprs = Expr[]
-    for (col_name, sql_type, _) in columnsDef
+    for col_def in columnsDef
+        if length(col_def) == 2
+            col_def = (col_def..., Vector{Any}()) 
+        end
+        (col_name, sql_type, _) = col_def
         julia_ty = mapSqlTypeToJulia(sql_type)
         push!(field_exprs, :( $(Symbol(col_name))::$(julia_ty) ))
     end
 
-    # 2) Define dinamicamente o mutable struct com @kwdef
     struct_expr = quote
         Base.@kwdef mutable struct $(modelName)
             $(field_exprs...)
@@ -113,12 +172,19 @@ function Model(modelName::Symbol,
     end
     @eval Main $struct_expr
 
-    # 3) Cria meta e registra no modelRegistry
-    columns_vec = [ Column(name, sql_type, constraints) for (name, sql_type, constraints) in columnsDef ]
+    columns_vec = []
+
+    for col_def in columnsDef
+        if length(col_def) == 2
+            col_def = (col_def..., Vector{Any}()) 
+        end
+        (col_name, sql_type, constraints) = col_def
+        julia_ty = mapSqlTypeToJulia(sql_type)
+        push!(columns_vec, Column(string(col_name), sql_type, constraints))
+    end
     meta = Model(string(modelName), columns_vec, getfield(Main, modelName))
     modelRegistry[Symbol(modelName)] = meta
 
-    # 4) Registra relacionamentos e índices
     if !isempty(relationshipsDef)
         rel_objs = Relationship[]
         for (fld, tgt, tgtfld, rtype) in relationshipsDef
@@ -142,7 +208,6 @@ function Model(modelName::Symbol,
     end
     indexesRegistry[Symbol(modelName)] = indexesDef
 
-    # 5) Executa migração idempotente (tabela + índices + FKs)
     conn = dbConnection()
     try
         migrate!(conn, meta)

@@ -170,24 +170,54 @@ end
 """
   Retrieve unique index definitions for table.
   Returns Vector of Vector{String} (columns per index).
+  Retrieve index definitions (unique e não-unique), exceto PRIMARY.
+  Retorna Vector de Dicts no formato:
+  [
+    Dict("name"=>String, "columns"=>Vector{String}, "unique"=>Bool, "lengths"=>Dict{String,Int})
+  ]
 """
 function getIndexes(conn::DBInterface.Connection, table::String)
     sql = """
-        SELECT INDEX_NAME, COLUMN_NAME
-        FROM information_schema.statistics
-        WHERE table_schema = ?
-          AND table_name = ?
-          AND NON_UNIQUE = 1
-        ORDER BY index_name, seq_in_index
+        SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, IFNULL(SUB_PART, 0) AS SUB_PART
+          FROM information_schema.statistics
+         WHERE table_schema = ?
+           AND table_name   = ?
+           AND INDEX_NAME   <> 'PRIMARY'
+         ORDER BY INDEX_NAME, SEQ_IN_INDEX
     """
     stmt = DBInterface.prepare(conn, sql)
     df = DataFrame(DBInterface.execute(stmt, [ENV["DB_NAME"], table]))
     DBInterface.close!(stmt)
-    filter!(r -> r.INDEX_NAME != "PRIMARY", df)  # remove primary key index
 
+    out = Dict{String,Any}[]  # acumulador final
+    if nrow(df) == 0
+        return Dict{String,Any}[]
+    end
+
+    # agrupa por INDEX_NAME
     by_idx = groupby(df, :INDEX_NAME)
-    return [collect(g.COLUMN_NAME) for g in by_idx]
+    for g in by_idx
+        name    = String(first(g.INDEX_NAME))
+        unique  = (first(g.NON_UNIQUE) == 0)
+        cols    = String.(collect(g.COLUMN_NAME))
+        lengths = Dict{String,Int}()
+        for r in eachrow(g)
+            subp = Int(r.SUB_PART)
+            if subp > 0
+                lengths[String(r.COLUMN_NAME)] = subp
+            end
+        end
+        push!(out, Dict(
+            "name"    => name,
+            "columns" => cols,
+            "unique"  => unique,
+            "lengths" => lengths
+        ))
+    end
+
+    return out
 end
+
 
 """
   Generate `Model` code for all tables in the database.

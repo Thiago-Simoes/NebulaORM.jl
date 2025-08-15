@@ -88,6 +88,14 @@ Base.@kwdef mutable struct Relationship
     type::Symbol  # :hasOne, :hasMany, :belongsTo
 end
 
+Base.@kwdef mutable struct Index
+    name::Union{Nothing,String} = nothing
+    columns::Vector{String}
+    unique::Bool = false
+    lengths::Dict{String,Int} = Dict{String,Int}()
+end
+
+
 
 # ---------------------------
 # Type functions

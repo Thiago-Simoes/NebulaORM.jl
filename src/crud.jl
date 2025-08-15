@@ -7,6 +7,10 @@ function initLogger()
     @info "Logger configured" level=logLevel
 end
 
+_normalize_param(v) = v === nothing ? missing : v
+_normalize_params(params::Vector{<:Any}) = Any[_normalize_param(x) for x in params]
+
+
 """
     executeQuery(conn::DBInterface.Connection, stmt::String, params::Vector{Any}=Any[]; useTransaction::Bool=true)
 
@@ -44,15 +48,17 @@ function executeQuery(conn::DBInterface.Connection, sql::AbstractString, params:
             @warn "onQueryHook failed" exception=(hookErr,)
         end
 
+        p = _normalize_params(params)  # 👈 AQUI: troca nothing->missing
+
         result = if is_sel
-            DBInterface.execute(stmt, params)
+            DBInterface.execute(stmt, p)
         else
             if useTransaction
                 DBInterface.transaction(conn) do
-                    DBInterface.execute(stmt, params)
+                    DBInterface.execute(stmt, p)
                 end
             else
-                DBInterface.execute(stmt, params)
+                DBInterface.execute(stmt, p)
             end
         end
         if is_sel
@@ -364,7 +370,15 @@ function buildBatchInsertQuery(model::DataType, records::AbstractVector)
     meta = modelConfig(model)
     colsByName = Dict(c.name => c for c in meta.columns)
 
-    # pula PK se auto-increment
+    # chaves presentes em pelo menos um registro (string/symbol)
+    present = Set{String}()
+    for rec in records
+        for k in keys(rec)
+            push!(present, string(k))
+        end
+    end
+
+    # sempre incluir colunas UUID; excluir PK auto-increment
     pk = getPrimaryKeyColumn(model)
     skip = Set{String}()
     if pk !== nothing
@@ -372,24 +386,30 @@ function buildBatchInsertQuery(model::DataType, records::AbstractVector)
         hasAutoInc && push!(skip, pk.name)
     end
 
-    colsList = [c.name for c in meta.columns if !(c.name in skip)]
-    colsSql  = join(["`$c`" for c in colsList], ", ")
-    rowCount = length(records)
-    singleRowPh = "(" * join(fill("?", length(colsList)), ",") * ")"
-    allPh = join(fill(singleRowPh, rowCount), ",")
+    colsList = String[]
+    for c in meta.columns
+        c.name in skip && continue
+        if (c.name in present) || isUUIDColumn(c)
+            push!(colsList, c.name)
+        end
+    end
+    isempty(colsList) && error("No columns to insert")
+
+    colsSql      = join(["`$c`" for c in colsList], ", ")
+    singleRowPh  = "(" * join(fill("?", length(colsList)), ",") * ")"
+    allPh        = join(fill(singleRowPh, length(records)), ",")
 
     params = Any[]
     for rec in records
-        getv(k) = haskey(rec, k)              ? rec[k] :
-                  haskey(rec, Symbol(k))      ? rec[Symbol(k)] :
-                  nothing
+        getv(k) = haskey(rec, k) ? rec[k] :
+                  haskey(rec, Symbol(k)) ? rec[Symbol(k)] : nothing
         for cname in colsList
             col = colsByName[cname]
             v = getv(cname)
             if v === nothing && isUUIDColumn(col)
                 v = generateUUID()
             end
-            push!(params, v)
+            push!(params, v === nothing ? missing : v)
         end
     end
 
