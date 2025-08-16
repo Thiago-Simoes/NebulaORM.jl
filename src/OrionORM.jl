@@ -38,7 +38,6 @@ __ORM_INITIALIZED__ = false
 # Automatic initialization only if not precompiling
 function __init__()
     initLogger()
-    Pool.initPool()
 
     global __ORM_INITIALIZED__ = true
 end
