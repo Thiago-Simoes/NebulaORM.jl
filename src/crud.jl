@@ -194,6 +194,19 @@ function findMany(model::DataType; query::AbstractDict=Dict())
     end
 end
 
+function findFirstOrThrow(model::DataType; query=Dict())
+    res = findFirst(model; query)
+    res === nothing && throw(RecordNotFoundError(nameof(model), "no match"))
+    return res
+end
+
+function findUniqueOrThrow(model::DataType, uniqueField, value; query=Dict())
+    res = findUnique(model, uniqueField, value; query)
+    res === nothing && throw(RecordNotFoundError(nameof(model), "no unique match"))
+    return res
+end
+
+
 
 function findFirst(model::DataType; query::AbstractDict = Dict())
     qdict    = normalizeQuery(query)

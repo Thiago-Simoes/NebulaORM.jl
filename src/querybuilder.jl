@@ -63,13 +63,14 @@ function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
                     elseif opos == "endsWith"
                         push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "%$(val)")
 
-                    elseif opos == "in"
-                        ph = join(fill("?", length(val)), ",")
-                        push!(conds, "`$table`.`$ks` IN ($ph)"); append!(params, val)
-                    elseif opos == "notIn"
-                        ph = join(fill("?", length(val)), ",")
-                        push!(conds, "`$table`.`$ks` NOT IN ($ph)"); append!(params, val)
-
+                    elseif opos == "in" || opos == "notIn"
+                        if isempty(val)
+                            push!(conds, opos == "in" ? "1=0" : "1=1")
+                        else
+                            ph = join(fill("?", length(val)), ",")
+                            push!(conds, "`$table`.`$ks` " * (opos == "in" ? "IN" : "NOT IN") * " ($ph)")
+                            append!(params, val)
+                        end
                     else
                         error("Unknown operator $opos")
                     end
@@ -156,6 +157,13 @@ function _build_order(order, model::DataType)::String
     end
 end
 
+function _validate_columns!(model::DataType, data::Dict)
+    allowed = Set(c.name for c in modelConfig(model).columns)
+    for k in keys(data)
+        haskey(allowed, string(k)) || throw(InvalidQueryError("Unknown column '$(k)'"))
+    end
+end
+
 # === MAIN BUILDER ========================================================
 function buildJoinClause(rootModel::DataType, rel::Relationship)
     rootTable     = modelConfig(rootModel).name
@@ -199,14 +207,8 @@ Generate SQL query and parameters for a given model and query definition.
 function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:params)}
     baseTable = modelConfig(model).name
     select    = _build_select(baseTable, query)
-    sql       = "SELECT $select FROM $baseTable"
+    sql       = "SELECT $select FROM $(qualifyTable(baseTable))"  # <- crase
     params    = Any[]
-
-    # JOIN / INCLUDE
-    if haskey(query,"include")
-        j = _build_join(model, query["include"])
-        sql *= j.sql
-    end
 
     # WHERE
     if haskey(query,"where")
@@ -232,6 +234,8 @@ Gera:
   params = [val1, val2, …]
 """
 function buildInsertQuery(model::DataType, data::Dict{<:AbstractString,<:Any})
+    _validate_columns!(model, data)
+
     meta   = modelConfig(model)
     cols   = String[]
     phs    = String[]
@@ -255,6 +259,8 @@ Gera:
   params = [val1, val2, …, [where-params…]]
 """
 function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, query::Dict{<:AbstractString,<:Any})
+    _validate_columns!(model, data)
+
     meta      = modelConfig(model)
     assigns   = String[]
     params    = Any[]

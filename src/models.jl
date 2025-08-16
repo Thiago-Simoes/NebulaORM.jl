@@ -78,8 +78,7 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
     tbl = meta.name
     if !table_exists(conn, tbl)
         schema = createTableDefinition(meta)
-        executeQuery(conn, "CREATE TABLE $tbl ($schema)", [];
-                     useTransaction=false)
+        executeQuery(conn, "CREATE TABLE $(qualifyTable(tbl)) ($schema)", []; useTransaction=false)
     end
 
     idxdefs = get(indexesRegistry, Symbol(tbl), Any[])
@@ -162,7 +161,9 @@ function Model(modelName::Symbol,
         end
         (col_name, sql_type, _) = col_def
         julia_ty = mapSqlTypeToJulia(sql_type)
-        push!(field_exprs, :( $(Symbol(col_name))::$(julia_ty) ))
+        is_not_null = any(occursin.("NOT NULL", uppercase.(constraints)))
+        field_ty = is_not_null ? julia_ty : Union{julia_ty, Missing}
+        push!(field_exprs, :( $(Symbol(col_name))::$(field_ty) ))
     end
 
     struct_expr = quote
@@ -273,17 +274,7 @@ function instantiate(model::DataType, record::Union{DataFrame, DataFrameRow})
     args = []
     for (i, col) in enumerate(meta.columns)
         value = record[i]
-        if ismissing(value)
-            jt = mapSqlTypeToJulia(col.type)
-            push!(args, jt === Int ? 0 :
-                        jt === Float64 ? 0.0 :
-                        jt === String ? "" :
-                        jt === Dates.Date ? Date(0) :
-                        jt === Dates.DateTime ? DateTime(0) :
-                        nothing)
-        else
-            push!(args, value)
-        end        
+        push!(args, value)
     end
     return model(args...)
 end

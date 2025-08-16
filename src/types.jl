@@ -11,19 +11,19 @@ function VARCHAR(size)::String
 end
 
 function TEXT()::String
-    return :( "TEXT" )
+    return "TEXT"
 end
 
 function INTEGER()::String
-    return :( "INTEGER" )
+    return "INTEGER"
 end
 
 function DOUBLE()::String
-    return :( "DOUBLE" )
+    return "DOUBLE"
 end
 
 function FLOAT()::String
-    return :( "FLOAT" )
+    return "FLOAT"
 end
 
 function DECIMAL(precision::Integer, scale::Integer)::String
@@ -31,7 +31,7 @@ function DECIMAL(precision::Integer, scale::Integer)::String
 end
 
 function BOOLEAN()::String
-    return :( "BOOLEAN" )
+    return "BOOLEAN"
 end
 
 function TINYINT(size::Integer)::String
@@ -51,19 +51,19 @@ function SET(values::Vector{<:AbstractString})::String
 end
 
 function UUID()::String
-    return :( "VARCHAR(36)" )
+    return "VARCHAR(36)"
 end
 
 function DATE()::String
-    return :( "DATE" )
+    return "DATE"
 end
 
 function TIMESTAMP()::String
-    return :( "TIMESTAMP" )
+    return "TIMESTAMP"
 end
 
 function JSON()::String
-    return :( "JSON" )
+    return "JSON"
 end
 
 # ---------------------------
