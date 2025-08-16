@@ -7,10 +7,6 @@ using .Pool
 # Connection to the database
 # ---------------------------
 function dbConnection()
-    if isempty(Pool.connection_pool)
-        Pool.init_pool()
-    end
-
     return Pool.getConnection()
 end
 

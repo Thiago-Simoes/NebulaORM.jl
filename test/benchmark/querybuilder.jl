@@ -1,3 +1,27 @@
+# /test/benchmark/include_benchmark.jl
+using BenchmarkTools
+using Random
+using Dates
+using OrionORM   # garantir que o pacote esteja usando o mesmo db/.env dos testes
+using DBInterface
+
+Model(:user, [
+    ("id", INTEGER(), [PrimaryKey(), AutoIncrement()]),
+    ("name", VARCHAR(50)),
+    ("email", VARCHAR(200), [Unique()]), # Constraint inline
+    ("cpf", VARCHAR(11))
+  ],
+  [],
+  [ # Indexes
+    ["id", "name"], # Index non-unique, using old syntax
+    Index(columns=["name", "cpf"], unique=true), # New syntax with Index
+    Dict("name" => "ux_user_email", "columns" => ["email", "cpf"], "unique" => true) # Named index using Dict syntax
+  ]
+)
+
+
+
+
 ##### TESTS #####
 # === SELECT ===============================================================
 q_select = Dict(
@@ -14,8 +38,8 @@ q_select = Dict(
 )
 
 # uso:
-(q_sql, q_params) = buildSelectQuery(User, q_select)
-@benchmark (q_sql, q_params) = buildSelectQuery(User, q_select)
+(q_sql, q_params) = OrionORM.buildSelectQuery(user, q_select)
+@benchmark (q_sql, q_params) = OrionORM.buildSelectQuery(user, q_select)
 # → prepare(conn, q_sql); execute(conn, q_params)
 
 
@@ -29,8 +53,8 @@ q_insert = Dict(
 )
 
 # uso:
-ins = buildInsertQuery(User, q_insert["data"])
-@benchmark ins = buildInsertQuery(User, q_insert["data"])
+ins = OrionORM.buildInsertQuery(user, q_insert["data"])
+@benchmark ins = OrionORM.buildInsertQuery(user, q_insert["data"])
 # → prepare(conn, ins.sql); execute(conn, ins.params)
 
 
@@ -44,8 +68,8 @@ q_update = Dict(
 )
 
 # uso:
-upd = buildUpdateQuery(User, q_update["data"], q_update["where"])
-@benchmark upd = buildUpdateQuery(User, q_update["data"], q_update["where"])
+upd = OrionORM.buildUpdateQuery(user, q_update["data"], q_update["where"])
+@benchmark upd = OrionORM.buildUpdateQuery(user, q_update["data"], q_update["where"])
 # → prepare(conn, upd.sql); execute(conn, upd.params)
 
 
@@ -55,6 +79,6 @@ q_delete = Dict(
 )
 
 # uso:
-del = buildDeleteQuery(User, q_delete["where"])
-@benchmark del = buildDeleteQuery(User, q_delete["where"])
+del = OrionORM.buildDeleteQuery(user, q_delete["where"])
+@benchmark del = OrionORM.buildDeleteQuery(user, q_delete["where"])
 # → prepare(conn, del.sql); execute(conn, del.params)

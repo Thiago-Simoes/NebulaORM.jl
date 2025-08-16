@@ -3,75 +3,114 @@ module Pool
 using DBInterface
 using MySQL
 using DotEnv
+using Dates
 
-# Lê POOL_SIZE do ENV ou usa 5 se não definido
-const POOL_SIZE = get(ENV, "POOL_SIZE", "5") |> x -> parse(Int, x)
-const connection_pool = Channel{MySQL.Connection}(POOL_SIZE)
+const connectionPool = Channel{Tuple{MySQL.Connection, DateTime}}(Inf)
+const poolSize = Ref(5)
+const poolInitialized = Ref(false)
+const poolLock = ReentrantLock()
+const watchdogInterval = Ref{Float64}(3600.0)
+
+const maxRetries = 3
+const initialBackoff = 0.5
 
 function __init__()
-    DotEnv.load!() 
-    init_pool()
+    DotEnv.load!()
+    watchdogInterval[] = parse(Float64, get(ENV, "POOL_RECYCLE_TIMEOUT", "3600"))
 end
 
-# Cria uma nova conexão
-function create_connection()
-    dbHost     = ENV["DB_HOST"]
-    dbUser     = ENV["DB_USER"]
-    dbPassword = ENV["DB_PASSWORD"]
-    dbName     = ENV["DB_NAME"]
-    dbPort     = parse(Int, string(ENV["DB_PORT"]))
-    return DBInterface.connect(MySQL.Connection, dbHost, dbUser, dbPassword, db=dbName, port=dbPort, reconnect=true)
-end
-
-function init_pool()
-    # Limpa conexões existentes, se houver
-    while isready(connection_pool)
-        take!(connection_pool)
+function createConnection()
+    retries = 0
+    while retries < maxRetries
+        try
+            dbHost = ENV["DB_HOST"]
+            dbUser = ENV["DB_USER"]
+            dbPassword = ENV["DB_PASSWORD"]
+            dbName = ENV["DB_NAME"]
+            dbPort = parse(Int, ENV["DB_PORT"])
+            return DBInterface.connect(
+                MySQL.Connection,
+                dbHost,
+                dbUser,
+                dbPassword,
+                db=dbName,
+                port=dbPort,
+                reconnect=true
+            )
+        catch e
+            retries += 1
+            if retries < maxRetries
+                backoffTime = initialBackoff * (2^(retries - 1))
+                sleep(backoffTime)
+            else
+                rethrow(e)
+            end
+        end
     end
-    # DotEnv.load!()  # se necessário
-    for _ in 1:POOL_SIZE
-        conn = create_connection()
-        put!(connection_pool, conn)
-    end
 end
 
-# Verifica se a conexão está ativa; se não, cria nova.
-function validate_connection(conn)
+function replenishPool()
+    if !trylock(poolLock)
+        return
+    end
     try
-        DBInterface.execute(conn, "SELECT 1")
-        return conn
-    catch
-        return create_connection()
+        while (connectionPool.n_avail_items) < poolSize[]
+            put!(connectionPool, (createConnection(), now()))
+        end
+    finally
+        unlock(poolLock)
+    end
+end
+
+function initPool(size::Int=5)
+    lock(poolLock) do
+        if poolInitialized[]
+            return
+        end
+        poolSize[] = size
+        for _ in 1:poolSize[]
+            conn = createConnection()
+            put!(connectionPool, (conn, now()))
+        end
+        poolInitialized[] = true
+    end
+    @async watchdog()
+end
+
+function watchdog()
+    Timer(0.0, interval=watchdogInterval[]) do timer
+        lock(poolLock) do
+            connsToRecycle = Tuple{MySQL.Connection, DateTime}[]
+            for _ in 1:(connectionPool.n_avail_items)
+                conn, creationTime = take!(connectionPool)
+                if now() - creationTime > Second(watchdogInterval[])
+                    try
+                        DBInterface.close(conn)
+                    catch e
+                        @warn "Failed to close recycled connection" exception=(e,)
+                    end
+                else
+                    push!(connsToRecycle, (conn, creationTime))
+                end
+            end
+            for connTuple in connsToRecycle
+                put!(connectionPool, connTuple)
+            end
+        end
+        replenishPool()
     end
 end
 
 function getConnection()
-    local conn = take!(connection_pool) |> validate_connection
-
-    # Verifica se conexões disponíveis estão abaixo da metade do pool
-    if connection_pool.n_avail_items < ceil(Int, POOL_SIZE / 2)
-        Threads.@spawn :interactive begin
-            while length(connection_pool) < POOL_SIZE
-                new_conn = create_connection()
-                put!(connection_pool, new_conn)
-            end
-        end
-    end
+    conn, _ = take!(connectionPool)
     return conn
 end
 
 function releaseConnection(conn::MySQL.Connection)
-    if connection_pool.n_avail_items < POOL_SIZE
-        put!(connection_pool, conn)
-    else
-        try
-            DBInterface.close(conn)
-        catch e
-            @warn "Failed to close extra connection" exception=(e,)
-        end
-    end
+    put!(connectionPool, (conn, now()))
+    @async replenishPool()
 end
 
-export init_pool, getConnection, releaseConnection, connection_pool
+export initPool, getConnection, releaseConnection
 
-end # module Pool
+end

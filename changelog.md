@@ -1,6 +1,46 @@
 # Changelog
 
-## [0.5.6] - 2025-08-16
+## [0.6.0] - 2025-08-16
+
+### Added
+
+* **Index management**: support for **unique / non-unique** and **composite** indexes (with optional prefix lengths), created idempotently via `information_schema` with deterministic names.
+* **Throwing lookups**: `findFirstOrThrow` and `findUniqueOrThrow` (raise `RecordNotFoundError` on no match).
+* **Telemetry**: enhanced `onQueryHook` payload (SQL, params, `{isSelect,useTransaction}` meta) and examples for counters/latency tracking.
+* **Validation**: model/table name validation before building SQL (fail-fast, clearer errors).
+
+### Changed
+
+* **Types**:
+
+  * SQL type helpers (`TEXT()`, `INTEGER()`, `DOUBLE()`, `FLOAT()`, `UUID()`, `DATE()`, `TIMESTAMP()`, `JSON()`) now return **plain `String`**.
+  * Nullable DB columns now map to **`Union{T,Missing}`** instead of sentinel defaults.
+* **Includes**: removed unused `JOIN`s from `buildSelectQuery` when `include` is present; eager loading continues via sub-queries (chunked).
+* **Identifier quoting**: consistent backtick quoting for tables/columns in all builders.
+
+### Fixed
+
+* **Empty set operators** in QueryBuilder:
+
+  * `IN []` → generates `1=0` (matches nothing).
+  * `NOT IN []` → generates `1=1` (matches everything).
+* Better error messages for invalid table/column names.
+
+### Performance
+
+* Fewer duplicated rows and smaller result sets by dropping redundant `JOIN`s for `include`.
+* Continued chunked eager loading to keep `IN (...)` lists bounded.
+* Automatic index creation during migrations improves filter and FK lookups.
+
+### Stability
+
+* Connection pool watchdog no longer closes connections while **in use**; marks them **stale** and **recycles on release**, preventing native crashes on stale handles. Added internal `generation` tracking.
+
+### Breaking Changes
+
+* Application code must handle **`missing`** for nullable fields.
+* If callers relied on join-based `include` row duplication, results will differ (now deduplicated via eager sub-queries).
+
 
 ## [0.5.5] - 2025-08-14
 ### Added
