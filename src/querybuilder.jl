@@ -158,9 +158,9 @@ function _build_order(order, model::DataType)::String
 end
 
 function _validate_columns!(model::DataType, data::Dict)
-    allowed = Set(c.name for c in modelConfig(model).columns)
+    allowed = Set(c.name for c in modelConfig(model).columns) |> collect
     for k in keys(data)
-        haskey(allowed, string(k)) || throw(InvalidQueryError("Unknown column '$(k)'"))
+        (string(k) in allowed) || throw(InvalidQueryError("Unknown column '$(k)'"))
     end
 end
 

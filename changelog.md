@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.5.6] - 2025-08-16
+
 ## [0.5.5] - 2025-08-14
 ### Added
 - Improved telemetry, implementing `onQueryHook`.

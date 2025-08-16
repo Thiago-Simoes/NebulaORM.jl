@@ -159,7 +159,7 @@ function Model(modelName::Symbol,
         if length(col_def) == 2
             col_def = (col_def..., Vector{Any}()) 
         end
-        (col_name, sql_type, _) = col_def
+        (col_name, sql_type, constraints) = col_def
         julia_ty = mapSqlTypeToJulia(sql_type)
         is_not_null = any(occursin.("NOT NULL", uppercase.(constraints)))
         field_ty = is_not_null ? julia_ty : Union{julia_ty, Missing}
