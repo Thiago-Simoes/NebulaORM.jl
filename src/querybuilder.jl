@@ -13,7 +13,11 @@
 Recebe qualquer Dict compatível com a sintaxe Prisma e devolve
 `clause::String` (com placeholders `?`) e `params::Vector` na ordem certa.
 """
-function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
+function _build_where(whereDef, model)::NamedTuple{(:clause,:params)}
+    baseTable = modelConfig(model).name
+    table     = baseTable
+    allowed   = Set(c.name for c in modelConfig(model).columns)
+
     conds  = String[]
     params = Any[]
 
@@ -25,59 +29,55 @@ function _build_where(whereDef, table)::NamedTuple{(:clause,:params)}
         ks = string(k)
 
         if ks == "AND" || ks == "OR"
-            sub = [_build_where(x, table) for x in v]
+            sub = [_build_where(x, model) for x in v]
             joined = join(["(" * s.clause * ")" for s in sub], " $ks ")
             append!(params, reduce(vcat, [s.params for s in sub], init = Any[]))
             push!(conds, joined)
 
         elseif ks == "NOT"
-            sub = _build_where(v, table)
+            sub = _build_where(v, model)
             push!(conds, "NOT (" * sub.clause * ")")
             append!(params, sub.params)
 
         elseif ks == "isNull"
-            # v deve ser algo como ["colName"]
-            push!(conds, "$(first(v)) IS NULL")
-
+            col = string(first(v))
+            (col in allowed) || throw(InvalidQueryError("Unknown column '$col'"))
+            push!(conds, "$(qualifyColumn(baseTable, col)) IS NULL")
         else
-            # ou é operador de array no nível de coluna
+            (ks in allowed) || throw(InvalidQueryError("Unknown column '$ks'"))
             if v isa Dict
-                for (op,val) in v
+                for (op, val) in v
                     opos = string(op)
-
                     if opos == "gt"
-                        push!(conds, "`$table`.`$ks` > ?");   push!(params, val)
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) > ?");   push!(params, val)
                     elseif opos == "gte"
-                        push!(conds, "`$table`.`$ks` >= ?");  push!(params, val)
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) >= ?");  push!(params, val)
                     elseif opos == "lt"
-                        push!(conds, "`$table`.`$ks` < ?");   push!(params, val)
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) < ?");   push!(params, val)
                     elseif opos == "lte"
-                        push!(conds, "`$table`.`$ks` <= ?");  push!(params, val)
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) <= ?");  push!(params, val)
                     elseif opos == "eq"
-                        push!(conds, "`$table`.`$ks` = ?");   push!(params, val)
-
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) = ?");   push!(params, val)
                     elseif opos == "contains"
-                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "%$(val)%")
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) LIKE ?");  push!(params, "%$(val)%")
                     elseif opos == "startsWith"
-                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "$(val)%")
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) LIKE ?");  push!(params, "$(val)%")
                     elseif opos == "endsWith"
-                        push!(conds, "`$table`.`$ks` LIKE ?");  push!(params, "%$(val)")
-
+                        push!(conds, "$(qualifyColumn(baseTable, ks)) LIKE ?");  push!(params, "%$(val)")
                     elseif opos == "in" || opos == "notIn"
                         if isempty(val)
                             push!(conds, opos == "in" ? "1=0" : "1=1")
                         else
                             ph = join(fill("?", length(val)), ",")
-                            push!(conds, "`$table`.`$ks` " * (opos == "in" ? "IN" : "NOT IN") * " ($ph)")
+                            opSql = opos == "in" ? "IN" : "NOT IN"
+                            push!(conds, "$(qualifyColumn(baseTable, ks)) $opSql ($ph)")
                             append!(params, val)
                         end
                     else
                         error("Unknown operator $opos")
                     end
                 end
-
             else
-                # caso simples campo = valor
                 push!(conds, "`$table`.`$ks` = ?")
                 push!(params, v)
             end
@@ -212,7 +212,7 @@ function buildSelectQuery(model::DataType, query::Dict)::NamedTuple{(:sql,:param
 
     # WHERE
     if haskey(query,"where")
-        w = _build_where(query["where"], baseTable)
+        w = _build_where(query["where"], model)
         sql    *= " WHERE " * w.clause
         append!(params, w.params)
     end
@@ -270,7 +270,7 @@ function buildUpdateQuery(model::DataType, data::Dict{<:AbstractString,<:Any}, q
     end
 
     tbl   = meta.name
-    w = _build_where(query, tbl)
+    w = _build_where(query, model)
     sql   = "UPDATE $tbl SET " * join(assigns, ", ") * " WHERE " * w.clause
     append!(params, w.params)
     return (sql=sql, params=params)
@@ -288,7 +288,7 @@ function buildDeleteQuery(model::DataType, query::Dict, forceDelete::Bool=false)
     
     meta   = modelConfig(model)
     tbl   = meta.name
-    w      = _build_where(query, tbl)
+    w      = _build_where(query, model)
     sql    = "DELETE FROM " * meta.name * " WHERE " * w.clause
     return (sql=sql, params=w.params)
 end

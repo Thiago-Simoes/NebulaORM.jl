@@ -73,7 +73,6 @@ function _index_cols_sql(tbl::String, idx::Index)
 end
 
 
-# --- Migração idempotente de esquema, índices e FKs ---
 function migrate!(conn::DBInterface.Connection, meta::Model)
     tbl = meta.name
     if !table_exists(conn, tbl)
@@ -84,11 +83,9 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
     idxdefs = get(indexesRegistry, Symbol(tbl), Any[])
 
     for raw in idxdefs
-        # Back-compat: se vier Vector{String} => índice normal
         idx = if raw isa Vector{String}
             Index(columns=raw)
         elseif raw isa Dict
-            # esperado: Dict("columns"=>["a","b"], "unique"=>true, "name"=>"uq_x", "lengths"=>Dict("a"=>191))
             cols    = Vector{String}(raw["columns"])
             uniq    = get(raw, "unique", false)
             iname   = get(raw, "name", nothing)
@@ -100,19 +97,16 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
             error("Unsupported index def: $(typeof(raw))")
         end
 
-        # nome padrão determinístico
         base = idx.unique ? "uq" : "idx"
         iname = isnothing(idx.name) ? "$(base)_$(tbl)_$(join(idx.columns, "_"))" : idx.name
 
         if idx.unique
-            # criar como CONSTRAINT UNIQUE (idempotente via information_schema.table_constraints)
             if !unique_constraint_exists(conn, tbl, iname)
                 cols_sql = _index_cols_sql(tbl, idx)
                 sql = "ALTER TABLE `$tbl` ADD CONSTRAINT `$iname` UNIQUE ($cols_sql)"
                 executeQuery(conn, sql, []; useTransaction=false)
             end
         else
-            # índice normal (idempotente via information_schema.statistics)
             if !index_exists(conn, tbl, iname)
                 cols_sql = _index_cols_sql(tbl, idx)
                 sql = "CREATE INDEX `$iname` ON `$tbl` ($cols_sql)"
@@ -121,20 +115,19 @@ function migrate!(conn::DBInterface.Connection, meta::Model)
         end
     end
 
-    # 3) Foreign keys (relacionamentos)
     for rel in get(relationshipsRegistry, Symbol(tbl), Relationship[])
-        fk_name = "fk_$(tbl)_$(rel.field)"
-        if !constraint_exists(conn, tbl, fk_name)
-            sql = nothing
-            if rel.type == :belongsTo
-                ref_tbl = modelConfig(resolveModel(rel.targetModel)).name
-                sql = "ALTER TABLE `$tbl` ADD CONSTRAINT `$fk_name` FOREIGN KEY (`$(rel.field)`) REFERENCES `$ref_tbl`(`$(rel.targetField)`) ON DELETE CASCADE ON UPDATE CASCADE"
-            else
-                tgt = modelConfig(resolveModel(rel.targetModel)).name
-                sql = "ALTER TABLE `$tgt` ADD CONSTRAINT `$fk_name` FOREIGN KEY (`$(rel.targetField)`) REFERENCES `$tbl`(`$(rel.field)`) ON DELETE CASCADE ON UPDATE CASCADE"
-            end
-            executeQuery(conn, sql, [];
-                         useTransaction=false)
+        rel.type == :belongsTo || continue
+
+        childTbl  = tbl
+        parentTbl = modelConfig(resolveModel(rel.targetModel)).name
+        fkName    = "fk_$(childTbl)_$(rel.field)"
+
+        if !constraint_exists(conn, childTbl, fkName)
+            sql = "ALTER TABLE `$childTbl` " *
+                "ADD CONSTRAINT `$fkName` FOREIGN KEY (`$(rel.field)`) " *
+                "REFERENCES `$parentTbl`(`$(rel.targetField)`) " *
+                "ON DELETE CASCADE ON UPDATE CASCADE"
+            executeQuery(conn, sql, []; useTransaction=false)
         end
     end
 end
@@ -153,7 +146,6 @@ function Model(modelName::Symbol,
                relationshipsDef::Vector = [],
                indexesDef::Vector = Vector{Any}())
 
-    # 1) Monta campos do struct com tipos Julia
     field_exprs = Expr[]
     for col_def in columnsDef
         if length(col_def) == 2
@@ -193,7 +185,6 @@ function Model(modelName::Symbol,
         end
         relationshipsRegistry[Symbol(modelName)] = rel_objs
 
-        # Create a reverse relationship for belongsTo
         for rel in rel_objs
             if rel.type == :belongsTo
                 parentModel = resolveModel(rel.targetModel)

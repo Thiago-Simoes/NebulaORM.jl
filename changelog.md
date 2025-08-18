@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.6.1] - 2025-08-18
+### Fixed
+* **Index:** Materialize FKs only on the child side (:belongsTo) to avoid duplicates.
+* **QueryBuilder Where:** fixed _build_where to avoid ambiguos columns names and unescaped.
+
 ## [0.6.0] - 2025-08-16
 
 ### Added
